@@ -1483,7 +1483,9 @@ function makeYardRenderer() {
   let count=0;
   for(const item of items) {
    const z=item.actor;
-   for(const {center,axes,color,material,shape} of zombiePose(z,view,item.advance)) {
+   for(const {center,axes,color,material,shape,tag} of zombiePose(z,view,item.advance)) {
+    if(item.accessory==='shield'&&tag!=='armor')continue;
+    if(item.accessory==='bomber'&&material!==6)continue;
     if((count+1)*17>instances.length) {const grown=new Float32Array(instances.length*2);grown.set(instances);instances=grown;}
     const off=count*17;
     instances.set(center,off);instances.set(axes[0],off+3);instances.set(axes[1],off+6);
@@ -1608,7 +1610,26 @@ function makeYardRenderer() {
   }
   groundShadows(modelItems);
   spr.forEach(index=>gl.disableVertexAttribArray(index));
-  drawModels(view,dx,dy,look,modelItems);
+  let characterClaims=null;
+  const characterModels=window.DawnwatchCharacters;
+  if(characterModels&&modelItems.length) {
+   try {
+    characterClaims=characterModels.claim({gl,canvas,view,dx,dy,look,eye,focal,width:W.width,height:W.height,items:modelItems,floorAt,types,theme:MAP.theme});
+   } catch(error) {
+    if(!draw.characterWarning) {draw.characterWarning=true;console.warn('Character meshes skipped:',error.message);}
+    characterClaims=null;
+   }
+  }
+  const fallback=characterClaims&&characterClaims.size?modelItems.filter(item=>!characterClaims.has(item.actor)):modelItems;
+  if(characterClaims&&characterClaims.size)for(const item of modelItems) {
+   if(characterClaims.has(item.actor)&&['shield','bomber'].includes(item.actor.type))fallback.push({...item,accessory:item.actor.type});
+  }
+  drawModels(view,dx,dy,look,fallback);
+  if(characterClaims&&characterClaims.size&&characterModels.render) {
+   try {characterModels.render();} catch(error) {
+    if(!draw.characterWarning) {draw.characterWarning=true;console.warn('Character meshes skipped:',error.message);}
+   }
+  }
   return canvas;
  }
  return {draw,canvas,lights,rebuild,viewPass,hasModels:()=>!!modelProgram&&!gl.isContextLost(),photoCount:()=>loadedPhotos};
