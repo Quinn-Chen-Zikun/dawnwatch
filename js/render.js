@@ -209,13 +209,13 @@ function makeYardRenderer() {
  if(!gl) return null;
  const vertexView=`
  uniform vec2 uCamera,uForward,uScale;
- uniform float uPitch;
+ uniform float uPitch,uEye;
  attribute vec3 aPosition;
  vec4 view(vec3 point) {
    vec2 d=point.xz-uCamera;
    float z=dot(d,uForward);
    float side=dot(d,vec2(-uForward.y,uForward.x));
-   return vec4(side*uScale.x,(point.y-1.35)*uScale.y-z*uPitch,z*1.002-.122,z);
+   return vec4(side*uScale.x,(point.y-uEye)*uScale.y-z*uPitch,z*1.002-.122,z);
  }`;
  const sceneVertex=vertexView+`
  attribute vec3 aNormal,aColor;
@@ -228,6 +228,7 @@ function makeYardRenderer() {
  }`;
  const atmosphere=`
  uniform vec2 uCamera;
+ uniform float uEye;
  uniform float uTime,uFlash;
  uniform vec4 uLights[12];
  uniform vec3 uFog,uAmbient;
@@ -262,7 +263,7 @@ function makeYardRenderer() {
  void main() {
    vec3 p=vPosition,n=normalize(vNormal),c=vColor;
    vec2 uv=abs(n.y)>.5?p.xz:vec2(abs(n.x)>.5?p.z:p.x,p.y);
-   vec3 v=normalize(vec3(uCamera.x,1.35,uCamera.y)-p);
+   vec3 v=normalize(vec3(uCamera.x,uEye,uCamera.y)-p);
    float grain=hash(floor(uv*88.))-.5,macro=noise(uv*.79);
    float mat=vMaterial;
    vec3 specular=vec3(0.);
@@ -351,7 +352,7 @@ function makeYardRenderer() {
   const p=gl.createProgram();gl.attachShader(p,shader(gl.VERTEX_SHADER,v));gl.attachShader(p,shader(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);
   if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
   const uniforms={};
-  for(const name of ['uCamera','uForward','uScale','uPitch','uTime','uFlash','uLights[0]','uType','uFog','uAmbient']) uniforms[name]=gl.getUniformLocation(p,name);
+  for(const name of ['uCamera','uForward','uScale','uPitch','uEye','uTime','uFlash','uLights[0]','uType','uFog','uAmbient']) uniforms[name]=gl.getUniformLocation(p,name);
   return {p,uniforms};
  }
  const scene=program(sceneVertex,sceneFragment),spritesProgram=program(spriteVertex,spriteFragment);
@@ -450,7 +451,8 @@ function makeYardRenderer() {
 
  function drawFacility(kind,x,z,h) {
   // The existing cover tile owns collision. Keep every piece inside that tile and its height.
-  const add=(a,b,c,w,d,e,mat,color)=>box(x+a,b*h,z+c,w,d*h,e,mat,color);
+  const base=floorAt(x+.5,z+.5);
+  const add=(a,b,c,w,d,e,mat,color)=>box(x+a,base+b*h,z+c,w,d*h,e,mat,color);
   if(kind==='freight') {
    add(0,0,0,1,.13,1,3,[.34,.26,.16]);
    add(.03,.13,.03,.94,.82,.94,3,[.57,.42,.28]);
@@ -704,12 +706,35 @@ function makeYardRenderer() {
   signObjects.push({x:(x0+x1)*.5,y:post-.05,z:z+.276,width:2.88,height:.72,data:makeSign(title,sub,warm?'#e9a85f':'#89e8ed')});
  }
  function buildCeiling(def) {
-  const h=def.height;
-  face([1,h,1],[columns-1,h,1],[columns-1,h,rows-1],[1,h,rows-1],[0,-1,0],def.color,1);
-  const beamColor=def.beam||[.19,.21,.20];
-  for(let x=3;x<columns-2;x+=4) box(x,h-.17,1.5,.17,.17,rows-3,5,beamColor);
-  for(let z=3;z<rows-2;z+=4) box(1.5,h-.17,z,columns-3,.17,.17,5,beamColor);
+  const h=def.height,hole=MAP.ceilingHole;
+  if(hole) {
+   const x0=hole.x0,y0=hole.y0,x1=hole.x1,y1=hole.y1;
+   face([1,h,1],[columns-1,h,1],[columns-1,h,y0],[1,h,y0],[0,-1,0],def.color,1);
+   face([1,h,y1],[columns-1,h,y1],[columns-1,h,rows-1],[1,h,rows-1],[0,-1,0],def.color,1);
+   face([1,h,y0],[x0,h,y0],[x0,h,y1],[1,h,y1],[0,-1,0],def.color,1);
+   face([x1,h,y0],[columns-1,h,y0],[columns-1,h,y1],[x1,h,y1],[0,-1,0],def.color,1);
+  } else face([1,h,1],[columns-1,h,1],[columns-1,h,rows-1],[1,h,rows-1],[0,-1,0],def.color,1);
+  const beamColor=def.beam||[.19,.21,.20],inside=(x,z)=>hole&&x>=hole.x0&&x<=hole.x1&&z>=hole.y0&&z<=hole.y1;
+  if(hole) {
+   const high=h+4.6,wallColor=[.30,.34,.34];
+   for(let z=hole.y0;z<hole.y1;z+=4) box(hole.x0,high-.24,z,hole.x1-hole.x0,.24,.20,5,beamColor);
+   for(let x=hole.x0;x<hole.x1;x+=4) box(x,high-.24,hole.y0,.20,.24,hole.y1-hole.y0,5,beamColor);
+   face([hole.x0,high,hole.y0],[hole.x1,high,hole.y0],[hole.x1,high,hole.y1],[hole.x0,high,hole.y1],[0,-1,0],def.color,1);
+   box(hole.x0,h,hole.y0,hole.x1-hole.x0,high-h,.08,1,wallColor);
+   box(hole.x0,h,hole.y1-.08,hole.x1-hole.x0,high-h,.08,1,wallColor);
+   box(hole.x0,h,hole.y0,.08,high-h,hole.y1-hole.y0,1,wallColor);
+   box(hole.x1-.08,h,hole.y0,.08,high-h,hole.y1-hole.y0,1,wallColor);
+   for(const [x,z] of [[57.5,7.5],[54.5,16.5]]) {
+    box(x-.38,high-.07,z-.14,.76,.07,.28,6,def.panel);
+    box(x-.02,high-.46,z-.02,.04,.39,.04,5,[.13,.15,.15]);
+   }
+  }
+  if(!hole) {
+   for(let x=3;x<columns-2;x+=4) box(x,h-.17,1.5,.17,.17,rows-3,5,beamColor);
+   for(let z=3;z<rows-2;z+=4) box(1.5,h-.17,z,columns-3,.17,.17,5,beamColor);
+  }
   for(const [x,z] of lights) {
+   if(inside(x,z)) continue;
    box(x-.38,h-.07,z-.14,.76,.07,.28,6,def.panel);
    box(x-.02,h-.46,z-.02,.04,.39,.04,5,[.13,.15,.15]);
    box(x-.09,h-.52,z-.09,.18,.06,.18,5,[.16,.18,.18]);
@@ -725,6 +750,28 @@ function makeYardRenderer() {
   lightOrder.length=0;
   for(let i=0;i<lights.length;i++) lightOrder.push(i);
   face([1,0,1],[columns-1,0,1],[columns-1,0,rows-1],[1,0,rows-1],[0,1,0],theme.ground,0);
+  if(MAP.heights) {
+   const floorColor=style==='hospital'?[.50,.53,.52]:style==='subway'?[.34,.38,.39]:[.42,.44,.43];
+   const stairColor=style==='hospital'?[.38,.40,.39]:[.30,.33,.34];
+   const rail=[.30,.34,.35];
+   const onStairs=(x,y)=>(MAP.stairs||[]).some(s=>x>=s.x0&&x<=s.x1&&y>=s.y0&&y<=s.y1);
+   for(let y=0;y<rows;y++) for(let x=0;x<columns;x++) {
+    const h=MAP.heights[y*columns+x];
+    if(h<=.01) continue;
+    if(onStairs(x,y)) box(x,0,y,1,h,1,1,stairColor);
+    else box(x,h-.16,y,1,.16,1,1,floorColor);
+    for(const [side,nx,ny] of [['n',x,y-1],['s',x,y+1],['w',x-1,y],['e',x+1,y]]) {
+     if(nx<0||ny<0||nx>=columns||ny>=rows) continue;
+     if(solid(nx,ny)) continue;
+     const nh=MAP.heights[ny*columns+nx]||0;
+     if(nh>h-.25) continue;
+     if(side==='n') {box(x,h-.96,y+.04,1,.05,.05,5,rail);box(x+.04,h-.96,y+.04,.05,.88,.05,5,rail);}
+     else if(side==='s') {box(x,h-.96,y+.91,1,.05,.05,5,rail);box(x+.04,h-.96,y+.91,.05,.88,.05,5,rail);}
+     else if(side==='w') {box(x+.04,h-.96,y,.05,.05,1,5,rail);box(x+.04,h-.96,y+.04,.05,.88,.05,5,rail);}
+     else {box(x+.91,h-.96,y,.05,.05,1,5,rail);box(x+.91,h-.96,y+.04,.05,.88,.05,5,rail);}
+    }
+   }
+  }
   for(let y=0;y<rows;y++) for(let x=0;x<columns;x++) {
    const tile=cell(x,y);
    if(tile==='.'||tile==='V') continue;
@@ -947,7 +994,7 @@ function makeYardRenderer() {
      return mix(a,b,f.z);
    }
    void main(){
-     vec3 p=vPosition,n=normalize(vNormal),c=vTint,v=normalize(vec3(uCamera.x,1.35,uCamera.y)-p);
+     vec3 p=vPosition,n=normalize(vNormal),c=vTint,v=normalize(vec3(uCamera.x,uEye,uCamera.y)-p);
      float mat=floor(vDetails.x),shape=fract(vDetails.x)*8.;
      float coarse=noise(vLocal*3.6),fine=h(floor(vLocal*49.));
      if(mat<.5) {
@@ -1062,8 +1109,8 @@ function makeYardRenderer() {
   gl.bindTexture(gl.TEXTURE_2D,imageTexture(shadowImage));
   gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
   for(const item of items) {
-   const x=item.x,z=item.y,r=item.actor.type==='brute'?.41:.34;
-   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([x-r,.012,z-r,0,0,x+r,.012,z-r,1,0,x+r,.012,z+r,1,1,x-r,.012,z-r,0,0,x+r,.012,z+r,1,1,x-r,.012,z+r,0,1]),gl.DYNAMIC_DRAW);
+   const x=item.x,z=item.y,r=item.actor.type==='brute'?.41:.34,ground=floorAt(item.x,item.y)+.012;
+   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([x-r,ground,z-r,0,0,x+r,ground,z-r,1,0,x+r,ground,z+r,1,1,x-r,ground,z-r,0,0,x+r,ground,z+r,1,1,x-r,ground,z+r,0,1]),gl.DYNAMIC_DRAW);
    gl.drawArrays(gl.TRIANGLES,0,6);
   }
   gl.depthMask(true);gl.disable(gl.BLEND);
@@ -1086,7 +1133,7 @@ function makeYardRenderer() {
    const d2=lightDistances[index];
    if(view!==player||d2>30) continue;
    const [x,z,height]=lamp,d=Math.sqrt(d2),dy=height-1.22;
-   if(d>.15&&ray(view.x,view.y,(x-view.x)/d,(z-view.y)/d,(height-1.35)/d).dist<d-.12) continue;
+   if(d>.15&&ray(view.x,view.y,(x-view.x)/d,(z-view.y)/d,(height-eye)/d).dist<d-.12) continue;
    const power=lightFrame[px+3];
    const strength=Math.abs(power)*.45/(1.1+d2*.58+dy*dy*.32);
    playerLight[0]+=strength*(power>0?1.40:.32);
@@ -1099,7 +1146,7 @@ function makeYardRenderer() {
   gl.useProgram(program.p);
   gl.uniform2f(u.uCamera,view.x,view.y);gl.uniform2f(u.uForward,dx,dy);
   gl.uniform2f(u.uScale,focal*2/W.width,focal*2/W.height);
-  gl.uniform1f(u.uPitch,look*2);gl.uniform1f(u.uTime,frames/60);
+  gl.uniform1f(u.uPitch,look*2);gl.uniform1f(u.uEye,eye);gl.uniform1f(u.uTime,frames/60);
   gl.uniform1f(u.uFlash,muzzle>0?.66:0);
   gl.uniform4fv(u['uLights[0]'],lightFrame);
   gl.uniform3fv(u.uFog,MAP.theme.fog);gl.uniform3fv(u.uAmbient,MAP.theme.ambient);
@@ -1166,7 +1213,7 @@ function yardActors(demo) {
   const [x,y]=supplies[i];
   const mapSprites=supplySprites[selectedMap]||supplySprites.yard;
   const usedSprites=usedSupplySprites[selectedMap]||usedSupplySprites.yard;
-  out.push({x,y,height:.59,img:!demo&&used[i]===supplyWave()?usedSprites:mapSprites,kind:1});
+  out.push({x,y,height:.59,base:floorAt(x,y),img:!demo&&used[i]===supplyWave()?usedSprites:mapSprites,kind:1});
  }
  if(!demo) out.push(...warningDrawables(enemies),...acidDrawables());
  return out;
@@ -1219,6 +1266,7 @@ function paintDamageDir(view,w,h) {
 }
 function paintYard() {
  const demo=mode==='menu',view=demo?preview:player,look=demo?.045:pitch;
+ if(demo) eye=1.35;
  if(!yard3D||yard3D.canvas.getContext('webgl').isContextLost()) {paintLegacy();return;}
  const dx=Math.cos(view.angle),dy=Math.sin(view.angle),w=W.width,h=W.height;
  paintSky(view,look);
@@ -1231,8 +1279,9 @@ function paintYard() {
    const wx=x-view.x,wz=z-view.y,forward=wx*dx+wz*dy;
    if(forward<1||forward>22||!visible(view.x,view.y,x,z)) continue;
    const sx=w/2+(wz*dx-wx*dy)*focal/forward;
-   const sy=h*(.5+look)+(1.35-y)*focal/forward;
-   const floorY=h*(.5+look)+1.35*focal/forward;
+   const floor=floorAt(x,z);
+   const sy=h*(.5+look)+(eye-y)*focal/forward;
+   const floorY=h*(.5+look)+(eye-floor)*focal/forward;
    if(sx<-140||sx>w+140) continue;
    const spread=clamp(150/forward,18,110)*theme.lightCone;
    const grad=ctx.createLinearGradient(sx,sy,sx,floorY);
@@ -1247,7 +1296,7 @@ function paintYard() {
  for(const [x,z,y,color] of yard3D.lights) {
   const wx=x-view.x,wz=z-view.y,forward=wx*dx+wz*dy;
   if(forward<.7 || forward>24||!visible(view.x,view.y,x,z)) continue;
-  const sx=w/2+(wz*dx-wx*dy)*focal/forward,sy=h*(.5+look)+(1.35-y)*focal/forward;
+  const sx=w/2+(wz*dx-wx*dy)*focal/forward,sy=h*(.5+look)+(eye-y)*focal/forward;
   const size=clamp(72/forward,8,50);
   if(sx<-size||sx>w+size||sy<-size||sy>h+size) continue;
   const glow=ctx.createRadialGradient(sx,sy,0,sx,sy,size);
@@ -1263,7 +1312,8 @@ function paintYard() {
    const wx=z.x-view.x,wz=z.y-view.y,forward=wx*dx+wz*dy;
    if(forward<.8||forward>24) continue;
    const sx=w/2+(wz*dx-wx*dy)*focal/forward;
-   const gy=h*(.5+look)+1.35*focal/forward;
+   const zFloor=floorAt(z.x,z.y);
+   const gy=h*(.5+look)+(eye-zFloor)*focal/forward;
    const size=clamp((z.boss?84:58)/forward,9,z.boss?54:42);
    const glow=ctx.createRadialGradient(sx,gy,0,sx,gy,size);
    glow.addColorStop(0,z.boss?'rgba(255,96,66,.50)':'rgba(255,196,96,.42)');
@@ -1271,11 +1321,11 @@ function paintYard() {
    glow.addColorStop(1,'rgba(255,120,40,0)');
    ctx.fillStyle=glow;ctx.beginPath();ctx.ellipse(sx,gy,size,size*.34,0,0,TAU);ctx.fill();
    ctx.strokeStyle=z.boss?'rgba(255,132,96,.48)':'rgba(255,208,116,.38)';ctx.lineWidth=1.4;ctx.beginPath();ctx.ellipse(sx,gy,size*.72,size*.24,0,0,TAU);ctx.stroke();
-   const bodyY=h*(.5+look)+(1.35-types[z.type].height*.56)*focal/forward;
+   const bodyY=h*(.5+look)+(eye-zFloor-types[z.type].height*.56)*focal/forward;
    const bodyGlow=ctx.createRadialGradient(sx,bodyY,0,sx,bodyY,clamp(64/forward,9,44));
    bodyGlow.addColorStop(0,z.boss?'rgba(255,102,74,.20)':'rgba(255,168,72,.16)');bodyGlow.addColorStop(.6,z.boss?'rgba(255,70,44,.07)':'rgba(255,140,54,.055)');bodyGlow.addColorStop(1,'rgba(255,120,40,0)');
    ctx.fillStyle=bodyGlow;ctx.fillRect(sx-clamp(64/forward,9,44),bodyY-clamp(64/forward,9,44),clamp(128/forward,18,88),clamp(128/forward,18,88));
-   const hy=h*(.5+look)+(1.35-types[z.type].height-.16)*focal/forward;
+   const hy=h*(.5+look)+(eye-zFloor-types[z.type].height-.16)*focal/forward;
    const pulse=1.5+Math.sin(frames*.18)*1.2;
    ctx.fillStyle=z.boss?'rgba(255,168,132,.88)':'rgba(255,222,138,.78)';ctx.beginPath();ctx.moveTo(sx,hy-5-pulse);ctx.lineTo(sx+5+pulse,hy);ctx.lineTo(sx,hy+5+pulse);ctx.lineTo(sx-5-pulse,hy);ctx.closePath();ctx.fill();
    ctx.fillStyle='rgba(255,246,190,.95)';ctx.fillRect(sx-1,hy-1,2,2);
@@ -1293,7 +1343,7 @@ function paintYard() {
    const wx=g.x-view.x,wz=g.y-view.y,forward=wx*dx+wz*dy;
    if(forward<.4||forward>26) continue;
    const sx=w/2+(wz*dx-wx*dy)*focal/forward;
-   const sy=h*(.5+look)+(1.35-g.z)*focal/forward;
+   const sy=h*(.5+look)+(eye-g.z)*focal/forward;
    const r=clamp(9/forward,2.5,9);
    ctx.fillStyle='#111614';ctx.beginPath();ctx.arc(sx,sy,r,0,TAU);ctx.fill();
    ctx.strokeStyle='#8a9a74';ctx.lineWidth=1;ctx.stroke();
@@ -1304,8 +1354,9 @@ function paintYard() {
    const wx=e.x-view.x,wz=e.y-view.y,forward=wx*dx+wz*dy;
    if(forward<.35||forward>30) continue;
    const sx=w/2+(wz*dx-wx*dy)*focal/forward;
-   const gy=h*(.5+look)+1.35*focal/forward;
-   const sy=h*(.5+look)+(1.35-.55)*focal/forward;
+   const eFloor=floorAt(e.x,e.y);
+   const gy=h*(.5+look)+(eye-eFloor)*focal/forward;
+   const sy=h*(.5+look)+(eye-eFloor-.55)*focal/forward;
    const p=1-e.t/e.max;
    const size=clamp((1.2+p*4.8)*focal/forward,10,w*.45);
    const glow=ctx.createRadialGradient(sx,sy,0,sx,sy,size);
@@ -1407,7 +1458,7 @@ function paintLegacy() {
  ctx.fillStyle=floor;ctx.fillRect(0,horizon,width,height-horizon);
  ctx.strokeStyle='#b5ab8127';ctx.lineWidth=1;
  for(let i=2;i<=30;i+=.75) {
-  const y=horizon+1.35*focal/i;
+  const y=horizon+eye*focal/i;
   if(y>height) continue;
   ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(width,y);ctx.stroke();
  }
@@ -1420,8 +1471,8 @@ function paintLegacy() {
   for(let i=0;i<stride && sx+i<width;i++) depth[sx+i]=d;
   const wallHeight=coverHeight(hit.gx,hit.gy);
   const tex=hit.kind==='V'?texture.steel:hit.kind==='C'?texture.crate:(hit.gx*13+hit.gy*5)%7<3?texture.steel:texture.brick;
-  const bottom=horizon+1.35*focal/d;
-  const wall=horizon+(1.35-wallHeight)*focal/d;
+  const bottom=horizon+eye*focal/d;
+  const wall=horizon+(eye-wallHeight)*focal/d;
   const u=Math.min(63,Math.floor(hit.u*64));
   ctx.drawImage(tex,u,0,1,64,sx,wall,stride,bottom-wall+.5);
   const shade=clamp(.09+d*.039+(hit.side?.11:0),.12,.78);
@@ -1450,7 +1501,7 @@ function paintLegacy() {
   if(item.z<.19) continue;
   const h=item.height*focal/item.z, w=h*item.img.width/item.img.height;
   const left=width/2+item.side*focal/item.z-w/2;
-  const top=horizon+(1.35-(item.base??0))*focal/item.z-h;
+  const top=horizon+(eye-(item.base??0))*focal/item.z-h;
   if(left+w<0||left>width) continue;
   ctx.globalAlpha=item.dim?.55:Math.max(.43,1-item.z*.028);
   for(let x=Math.max(0,Math.floor(left));x<Math.min(width,left+w);x+=stride) {

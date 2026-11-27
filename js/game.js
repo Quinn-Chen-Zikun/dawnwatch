@@ -17,7 +17,7 @@ let fovScale=Math.min(1.15,Math.max(.85,Number(read('blackout-fov','1'))||1));
 let effectsOn=read('blackout-fx','1')!=='0';
 let masterVolume=Math.min(1,Math.max(0,Number(read('blackout-vol','.8'))||.8));
 let gameMode=read('blackout-mode','standard')==='endless'?'endless':'standard';
-let depth, rays, focal, sky, floor;
+let depth, rays, focal, sky, floor, eye=1.35;
 let playStyle=read('blackout-style','survival')==='story'?'story':'survival';
 let survivalMap=read('blackout-map','yard');
 if(!MAPS[survivalMap]) survivalMap='yard';
@@ -32,9 +32,17 @@ function fits(x,y,r) {
  return !solid(Math.floor(x-r),Math.floor(y-r)) && !solid(Math.floor(x+r),Math.floor(y-r)) &&
         !solid(Math.floor(x-r),Math.floor(y+r)) && !solid(Math.floor(x+r),Math.floor(y+r));
 }
+function floorAt(x,y) {
+ const heights=MAP&&MAP.heights;
+ if(!heights) return 0;
+ const cx=Math.floor(x),cy=Math.floor(y);
+ if(cx<0||cy<0||cx>=columns||cy>=rows) return 0;
+ return heights[cy*columns+cx]||0;
+}
 function move(actor,dx,dy,radius) {
- if (fits(actor.x+dx,actor.y,radius)) actor.x+=dx;
- if (fits(actor.x,actor.y+dy,radius)) actor.y+=dy;
+ const base=floorAt(actor.x,actor.y);
+ if(fits(actor.x+dx,actor.y,radius)&&Math.abs(floorAt(actor.x+dx,actor.y)-base)<=.62) actor.x+=dx;
+ if(fits(actor.x,actor.y+dy,radius)&&Math.abs(floorAt(actor.x,actor.y+dy)-base)<=.62) actor.y+=dy;
 }
 function ray(x,y,dx,dy,shotSlope=null) {
  let gx=Math.floor(x), gy=Math.floor(y);
@@ -46,7 +54,7 @@ function ray(x,y,dx,dy,shotSlope=null) {
  for(let i=0;i<96;i++) {
   if(tx<ty) {dist=tx;tx+=ax;gx+=sx;side=0;} else {dist=ty;ty+=ay;gy+=sy;side=1;}
   if (!solid(gx,gy)) continue;
-  if(shotSlope!==null && 1.35+shotSlope*dist>coverHeight(gx,gy)) continue;
+  if(shotSlope!==null && eye+shotSlope*dist>coverHeight(gx,gy)) continue;
   const pos=side===0?y+dy*dist:x+dx*dist;
   return {dist,side,gx,gy,u:pos-Math.floor(pos),kind:cell(gx,gy)};
  }
@@ -63,10 +71,10 @@ function walkableLine(x,y,tx,ty,radius,stopShort=0) {
  const dx=tx-x,dy=ty-y,distance=Math.hypot(dx,dy);
  if(distance<=stopShort) return true;
  const fraction=(distance-stopShort)/distance;
- const samples=Math.ceil((distance-stopShort)/.19);
+ const samples=Math.ceil((distance-stopShort)/.19),base=floorAt(x,y);
  for(let i=1;i<=samples;i++) {
   const t=fraction*i/samples;
-  if(!fits(x+dx*t,y+dy*t,radius)) return false;
+  if(!fits(x+dx*t,y+dy*t,radius)||Math.abs(floorAt(x+dx*t,y+dy*t)-base)>.62) return false;
  }
  return true;
 }
@@ -251,7 +259,7 @@ function initAmmo() {
  }
 }
 function reset() {
- player={...worldStart,hp:100};
+ player={...worldStart,hp:100};eye=1.35+floorAt(player.x,player.y);
  enemies=[];acidShots=[];initAmmo();
  npcs=[];corpses=[];bloodMotes=[];bloodPools=[];tracers=[];dialogueQueue=[];dialogueCurrent=null;story=null;
  used=supplies.map(()=>0);wave=0;waveTime=0;spawnQueue=[];spawnClock=0;kills=0;gun=0;runCredits=0;
@@ -513,7 +521,15 @@ function setupStoryAct(index,first) {
  story.bossSpawned=false;
  wave=story.chapter*2+index+1;
  if(act.type==='boss') {
-  const point=act.point||[player.x,player.y];
+  let point=act.point||[player.x,player.y];
+  if(Math.hypot(point[0]-player.x,point[1]-player.y)<3.2) {
+   const base=Math.atan2(point[1]-player.y,point[0]-player.x);
+   for(let attempt=0;attempt<12;attempt++) {
+    const angle=base+(attempt?Math.PI*2*attempt/12:0),radius=3.6+Math.random()*1.6;
+    const x=point[0]+Math.cos(angle)*radius,y=point[1]+Math.sin(angle)*radius;
+    if(fits(x,y,.3)&&Math.abs(floorAt(x,y)-floorAt(player.x,player.y))<.7) {point=[x,y];break;}
+   }
+  }
   spawnAt('boss',point[0],point[1],false);
   story.bossSpawned=true;story.aliveCap=act.cap??3;story.spawnTimer=2.8;
   alarm=2.2;blast=.35;
@@ -594,65 +610,170 @@ function reviveNpc(n) {
  say(n.squad.id,'我没事，继续走。',3.2);
  tone(430,.2,'triangle',.09,650);
 }
+function nextStepToward(sx,sy,tx,ty) {
+ const cols=columns,totalRows=rows;
+ let gx=clamp(Math.floor(tx),1,cols-2),gy=clamp(Math.floor(ty),1,totalRows-2);
+ if(solid(gx,gy)) {
+  let found=false;
+  for(const [ox,oy] of [[0,1],[1,0],[0,-1],[-1,0],[1,1],[-1,1],[1,-1],[-1,-1]]) {
+   if(!solid(gx+ox,gy+oy)) {gx+=ox;gy+=oy;found=true;break;}
+  }
+  if(!found) return null;
+ }
+ const start=Math.floor(sy)*cols+Math.floor(sx),goal=gy*cols+gx;
+ if(start===goal||start<0||start>=cols*totalRows) return {x:tx,y:ty};
+ const prev=new Int32Array(cols*totalRows).fill(-1);
+ const queue=[start];prev[start]=start;
+ let found=-1;
+ for(let head=0;head<queue.length;head++) {
+  const at=queue[head],x=at%cols,y=Math.floor(at/cols),h0=floorAt(x+.5,y+.5);
+  for(const [nx,ny] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]) {
+   if(nx<1||ny<1||nx>=cols-1||ny>=totalRows-1||solid(nx,ny)) continue;
+   const ni=ny*cols+nx;
+   if(prev[ni]!==-1||Math.abs(floorAt(nx+.5,ny+.5)-h0)>.62) continue;
+   prev[ni]=at;queue.push(ni);
+   if(ni===goal) {found=ni;break;}
+  }
+  if(found>=0) break;
+ }
+ if(found<0) return null;
+ let at=found;
+ while(prev[at]!==start&&at!==start) at=prev[at];
+ return at===start?{x:tx,y:ty}:{x:(at%cols)+.5,y:Math.floor(at/cols)+.5};
+}
+function npcStep(n,tx,ty,speed,dt) {
+ const dx=tx-n.x,dy=ty-n.y,distance=Math.hypot(dx,dy);
+ if(distance<.08) return;
+ if(walkableLine(n.x,n.y,tx,ty,.21)&&Math.abs(floorAt(tx,ty)-floorAt(n.x,n.y))<=.62) {
+  const step=Math.min(distance,speed*dt);
+  move(n,dx/distance*step,dy/distance*step,.21);
+  n.anim+=dt*speed*3.2;
+  return;
+ }
+ n.pathTimer=(n.pathTimer??0)-dt;
+ if(n.pathTimer<=0||!n.pathPoint||Math.hypot(n.pathPoint.x-tx,n.pathPoint.y-ty)>2.2) {
+  n.pathPoint=nextStepToward(n.x,n.y,tx,ty);
+  n.pathTimer=.5+Math.random()*.3;
+ }
+ if(!n.pathPoint) return;
+ const px=n.pathPoint.x-n.x,py=n.pathPoint.y-n.y,pd=Math.hypot(px,py)||1;
+ const step=Math.min(pd,speed*dt);
+ move(n,px/pd*step,py/pd*step,.21);
+ n.anim+=dt*speed*3.2;
+}
+function npcAnchor(n) {
+ const role=n.squad.id,p=player,objective=story&&story.objective;
+ const base=objective?Math.atan2(objective.y-p.y,objective.x-p.x):p.angle;
+ const cfg=role==='qin'?{dist:5.6,side:0}:role==='lin'?{dist:4.4,side:-1.4}:{dist:9.2,side:1.6};
+ for(let attempt=0;attempt<12;attempt++) {
+  const angle=base+(Math.random()-.5)*.85;
+  const distance=cfg.dist*(.72+Math.random()*.55),side=cfg.side*(.35+Math.random()*.9);
+  const x=p.x+Math.cos(angle)*distance+Math.cos(angle+Math.PI/2)*side;
+  const y=p.y+Math.sin(angle)*distance+Math.sin(angle+Math.PI/2)*side;
+  if(fits(x,y,.24)&&Math.abs(floorAt(x,y)-floorAt(p.x,p.y))<.62) return {x,y};
+ }
+ return null;
+}
+function npcTarget(n) {
+ let best=null,bestScore=Infinity;
+ for(const z of enemies) {
+  const distance=Math.hypot(z.x-n.x,z.y-n.y);
+  if(distance>20||!visible(n.x,n.y,z.x,z.y)) continue;
+  let score=distance;
+  if(z.boss) score-=5;
+  else if(z.elite) score-=2.5;
+  if(z.type==='bomber'&&distance<7) score-=3;
+  if(score<bestScore) {best=z;bestScore=score;}
+ }
+ return best;
+}
+function npcFire(n,target) {
+ n.fireCd=Math.max(.16,n.squad.rate*(.78+Math.random()*.55));
+ n.muzzle=.07;
+ const muzzleX=n.x+Math.cos(n.yaw)*.30,muzzleY=n.y+Math.sin(n.yaw)*.30;
+ const floor=floorAt(target.x,target.y);
+ tracers.push({x1:muzzleX,y1:muzzleY,z1:floorAt(n.x,n.y)+1.30,x2:target.x,y2:target.y,z2:floor+types[target.type].height*.62,life:.085,maxLife:.085});
+ if(!muted&&audio&&audio.state==='running') tone(620,.035,'square',.014,430);
+ const distance=Math.hypot(target.x-n.x,target.y-n.y);
+ if(Math.random()<clamp(.90-distance*.030,.42,.86)) {
+  target.hp-=n.squad.damage*(.85+Math.random()*.3);target.flash=.10;
+  bloodBurst(target.x,target.y,floor+1.05,target.x-n.x,target.y-n.y,5,.9);
+  if(target.hp<=0&&enemies.includes(target)) {
+   killEnemy(target,Math.atan2(target.y-n.y,target.x-n.x));
+   kills++;earn(Math.round(killValue(target.type,false)*.5));
+   if(target.type==='bomber') explodeGrenade({x:target.x,y:target.y});
+  }
+ }
+}
 function updateNpcs(dt) {
  if(!story) return;
  if(!route.length) updateRoute();
  for(const n of npcs) {
   n.flash=Math.max(0,n.flash-dt);n.muzzle=Math.max(0,n.muzzle-dt);n.barkCd=Math.max(0,(n.barkCd??0)-dt);
-  n.hurtCd=Math.max(0,(n.hurtCd??0)-dt);
+  n.hurtCd=Math.max(0,(n.hurtCd??0)-dt);n.healCd=Math.max(0,(n.healCd??0)-dt);
   if(n.downed) {
    n.downT=(n.downT??0)+dt;
-   const near=Math.hypot(player.x-n.x,player.y-n.y);
-   if(near<2.1) n.revive=(n.revive??0)+dt; else n.revive=Math.max(0,(n.revive??0)-dt*.55);
-   if(n.revive>2.2||n.downT>16) reviveNpc(n);
-   continue;
+   let helpers=0;
+   for(const other of npcs) if(other!==n&&!other.downed&&Math.hypot(other.x-n.x,other.y-n.y)<1.75) helpers++;
+   if(Math.hypot(player.x-n.x,player.y-n.y)<2.2) helpers++;
+   if(helpers) n.revive=(n.revive??0)+dt*(.7+helpers*.45);
+   else n.revive=Math.max(0,(n.revive??0)-dt*.35);
+   if(n.revive>2.0||n.downT>18) reviveNpc(n);
+  } else n.revive=0;
+ }
+ for(const n of npcs) {
+  if(n.downed) continue;
+  const role=n.squad.id,target=npcTarget(n);
+  const distToPlayer=Math.hypot(player.x-n.x,player.y-n.y);
+  let rescue=null,rescueDist=Infinity;
+  for(const other of npcs) {
+   if(other===n||!other.downed) continue;
+   const distance=Math.hypot(other.x-n.x,other.y-n.y);
+   if(distance<rescueDist) {rescueDist=distance;rescue=other;}
   }
-  const spotAngle=player.angle;
-  const backX=-Math.cos(spotAngle),backY=-Math.sin(spotAngle);
-  const rightX=Math.cos(spotAngle+Math.PI/2),rightY=Math.sin(spotAngle+Math.PI/2);
-  const slot=[-1.15,1.15,0][n.slot===undefined?npcs.indexOf(n)%3:n.slot%3];
-  const depth=[1.5,1.5,2.35][npcs.indexOf(n)%3];
-  let tx=player.x+backX*depth+rightX*slot,ty=player.y+backY*depth+rightY*slot;
-  if(!walkableLine(n.x,n.y,tx,ty,.2)) {
-   const gx=Math.floor(n.x),gy=Math.floor(n.y),next=route[gy*columns+gx];
-   if(next!==undefined&&next>=0) {tx=next%columns+.5;ty=Math.floor(next/columns)+.5;}
-   else {tx=player.x;ty=player.y;}
-  }
-  const distance=Math.hypot(tx-n.x,ty-n.y);
-  if(distance>.28) {
-   const far=Math.hypot(player.x-n.x,player.y-n.y);
-   const speed=far>7?4.7:3.4;
-   const step=Math.min(distance,speed*dt);
-   move(n,(tx-n.x)/distance*step,(ty-n.y)/distance*step,.21);
-   n.anim+=dt*speed*3.4;
-   n.yaw=Math.atan2(ty-n.y,tx-n.x);
-  }
-  let best=null,bestDistance=13;
-  for(const z of enemies) {
-   const distance=Math.hypot(z.x-n.x,z.y-n.y);
-   if(distance>=bestDistance||!visible(n.x,n.y,z.x,z.y)) continue;
-   best=z;bestDistance=distance;
-  }
-  if(best) {
-   n.yaw=Math.atan2(best.y-n.y,best.x-n.x);
-   n.fireCd-=dt;
-   if(n.fireCd<=0) {
-    n.fireCd=n.squad.rate*(.82+Math.random()*.5);
-    n.muzzle=.06;
-    const muzzleX=n.x+Math.cos(n.yaw)*.28,muzzleY=n.y+Math.sin(n.yaw)*.28;
-    tracers.push({x1:muzzleX,y1:muzzleY,z1:1.32,x2:best.x,y2:best.y,z2:types[best.type].height*.62,life:.085,maxLife:.085});
-    if(!muted&&audio&&audio.state==='running') tone(620,.035,'square',.016,430);
-    if(Math.random()<clamp(.86-bestDistance*.028,.44,.82)) {
-     best.hp-=n.squad.damage*(.85+Math.random()*.3);best.flash=.1;
-     bloodBurst(best.x,best.y,1.05,best.x-n.x,best.y-n.y,5,.9);
-     if(best.hp<=0&&enemies.includes(best)) {
-      killEnemy(best,Math.atan2(best.y-n.y,best.x-n.x));
-      kills++;earn(Math.round(killValue(best.type,false)*.5));
-      if(best.type==='bomber') explodeGrenade({x:best.x,y:best.y});
-     }
-    }
+  let desired=null,speed=3.3;
+  if(rescue&&rescueDist<13&&(!target||role==='lin'||rescueDist<7)) {
+   desired={x:rescue.x,y:rescue.y};speed=rescueDist>7?4.7:3.6;n.state='rescue';
+  } else if(distToPlayer>19) {
+   desired={x:player.x,y:player.y};speed=4.8;n.state='regroup';
+  } else if(role==='lin'&&player.hp<34&&distToPlayer>4.2) {
+   desired={x:player.x,y:player.y};speed=4.6;n.state='regroup';
+  } else if(target) {
+   const distance=Math.hypot(target.x-n.x,target.y-n.y),range=n.squad.range||10;
+   if(distance>range+1.5) {desired={x:target.x,y:target.y};speed=role==='qi'?4.2:3.6;n.state='advance';}
+   else if(distance<range-4) {
+    const angle=Math.atan2(n.y-target.y,n.x-target.x);
+    desired={x:target.x+Math.cos(angle)*range,y:target.y+Math.sin(angle)*range};
+    speed=3.3;n.state='hold';
+   } else {
+    const angle=Math.atan2(n.y-target.y,n.x-target.x);
+    const side=role==='qi'?(n.flank||(n.flank=Math.random()<.5?-1:1)):role==='lin'?.35:0;
+    const offset=side*(Math.PI/2.6);
+    desired={x:target.x+Math.cos(angle+offset)*range,y:target.y+Math.sin(angle+offset)*range};
+    speed=role==='qi'?3.9:2.8;n.state='fight';
    }
+   n.fireCd=Math.max(0,(n.fireCd??0)-dt);
+   if(n.fireCd<=0&&distance<=(n.squad.range||10)+4&&visible(n.x,n.y,target.x,target.y)) npcFire(n,target);
+   n.yaw=Math.atan2(target.y-n.y,target.x-n.x);
+  } else {
+   if(!n.anchor||Math.hypot(n.anchor.x-n.x,n.anchor.y-n.y)<1.15||(n.anchorTimer??0)<=0) {
+    n.anchor=npcAnchor(n);n.anchorTimer=4+Math.random()*4;
+   }
+   n.anchorTimer-=dt;
+   if(n.anchor) {desired=n.anchor;speed=role==='qi'?3.8:2.9;n.state='patrol';}
   }
+  if(desired) {
+   const distance=Math.hypot(desired.x-n.x,desired.y-n.y);
+   if(distance>.65&&(n.state!=='fight'||distance>1.2)) npcStep(n,desired.x,desired.y,speed,dt);
+   if(n.state!=='fight'&&distance>.5) n.yaw=Math.atan2(desired.y-n.y,desired.x-n.x);
+  }
+  for(const other of npcs) {
+   if(other===n||other.downed) continue;
+   const dx=n.x-other.x,dy=n.y-other.y,between=Math.hypot(dx,dy);
+   if(between>.01&&between<1.1) move(n,dx/between*.022,dy/between*.022,.21);
+  }
+  const dx=n.x-player.x,dy=n.y-player.y,between=Math.hypot(dx,dy);
+  if(between>.01&&between<1.55&&n.state!=='regroup'&&n.state!=='rescue') move(n,dx/between*.020,dy/between*.020,.21);
   for(const z of enemies) {
    if(Math.hypot(z.x-n.x,z.y-n.y)>.95||!visible(z.x,z.y,n.x,n.y)) continue;
    if((n.hurtCd??0)<=0) {
@@ -660,7 +781,11 @@ function updateNpcs(dt) {
     if(n.hp<=0) {downNpc(n);break;}
    }
   }
-  if(n.barkCd<=0&&!dialogueCurrent&&!dialogueQueue.length&&Math.random()<dt*1.4) {
+  if(role==='lin'&&n.healCd<=0&&player.hp<78&&distToPlayer<7.5&&!enemies.some(z=>Math.hypot(z.x-n.x,z.y-n.y)<4.5)) {
+   player.hp=Math.min(100,player.hp+12);n.healCd=12;
+   setNotice('林夏为你处理了伤口',1.6);tone(520,.16,'triangle',.08,760);
+  }
+  if(n.barkCd<=0&&!dialogueCurrent&&!dialogueQueue.length&&Math.random()<dt*1.2) {
    say(n.squad.id,n.squad.line,3.4);n.barkCd=22+Math.random()*16;
   }
  }
@@ -776,6 +901,7 @@ function updateRoute() {
   for(const [nx,ny] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]) {
    const next=ny*columns+nx;
    if(solid(nx,ny)||route[next]!==-1) continue;
+   if(Math.abs(floorAt(nx+.5,ny+.5)-floorAt(x+.5,y+.5))>.62) continue;
    route[next]=at;queue.push(next);
   }
  }
@@ -831,7 +957,7 @@ function traceShot(dx,dy,slope) {
   }
   const x=z.x-player.x,y=z.y-player.y,distance=x*dx+y*dy;
   if(distance<.19||distance>=targetDepth) continue;
-  const side=y*dx-x*dy,gunHeight=1.35+pitch*W.height*distance/focal;
+  const side=y*dx-x*dy,gunHeight=eye+pitch*W.height*distance/focal;
   const height=types[z.type].height,{canvas,pixels}=zombieFrame(z);
   const sx=Math.floor(canvas.width/2-side*canvas.height/height);
   const sy=Math.floor((1-gunHeight/height)*canvas.height);
@@ -930,7 +1056,7 @@ function throwGrenade() {
  const dx=Math.cos(player.angle),dy=Math.sin(player.angle);
  const sx=player.x+dx*.38,sy=player.y+dy*.38;
  grenadeLive.push({
-  x:fits(sx,sy,.12)?sx:player.x,y:fits(sx,sy,.12)?sy:player.y,z:1.25,
+  x:fits(sx,sy,.12)?sx:player.x,y:fits(sx,sy,.12)?sy:player.y,z:floorAt(sx,sy)+1.25,
   vx:dx*6.6,vy:dy*6.6,vz:3.1+pitch*4.2,fuse:1.25
  });
  tone(380,.12,'triangle',.055,170);
@@ -982,7 +1108,8 @@ function updateGrenades(dt) {
   if(fits(nx,g.y,.1)) g.x=nx; else {g.vx*=-.35;g.vy*=.8;}
   if(fits(g.x,ny,.1)) g.y=ny; else {g.vy*=-.35;g.vx*=.8;}
   g.z+=g.vz*dt;
-  if(g.z<.12) {g.z=.12;g.vz*=-.42;g.vx*=.84;g.vy*=.84;if(Math.abs(g.vz)<.7)g.vz=0;}
+  const ground=floorAt(g.x,g.y);
+  if(g.z<ground+.12) {g.z=ground+.12;g.vz*=-.42;g.vx*=.84;g.vy*=.84;if(Math.abs(g.vz)<.7)g.vz=0;}
   if(g.fuse<=0) {grenadeLive.splice(i,1);explodeGrenade(g);}
  }
  for(let i=explosions.length-1;i>=0;i--) {
@@ -1258,6 +1385,7 @@ function specialAttack(z,dist,dt) {
 }
 
 function bloodBurst(x,y,z,dx,dy=0,count=10,power=1) {
+ z+=floorAt(x,y);
  const length=Math.hypot(dx,dy)||1,ux=dx/length,uy=dy/length;
  for(let i=0;i<count;i++) {
   const angle=Math.random()*TAU,spread=.4+Math.random()*1.8;
@@ -1286,7 +1414,7 @@ function killEnemy(z,dir) {
   corpses.splice(far,1);
  }
  bloodBurst(z.x,z.y,1.08,z.x-player.x,z.y-player.y,20,1.55);
- bloodPools.push({x:z.x,y:z.y,size:.52+Math.random()*.42,life:26,maxLife:26});
+ bloodPools.push({x:z.x,y:z.y,elev:floorAt(z.x,z.y),size:.52+Math.random()*.42,life:26,maxLife:26});
  if(bloodPools.length>28) bloodPools.splice(0,bloodPools.length-28);
  return true;
 }
@@ -1294,7 +1422,8 @@ function updateBlood(dt) {
  for(let i=bloodMotes.length-1;i>=0;i--) {
   const p=bloodMotes[i];p.life-=dt;p.vz-=9.8*dt;
   p.x+=p.vx*dt;p.y+=p.vy*dt;p.z+=p.vz*dt;
-  if(p.z<=.03) {p.z=.03;p.vx*=.18;p.vy*=.18;p.vz=0;p.life=Math.min(p.life,.34);}
+  const ground=floorAt(p.x,p.y);
+  if(p.z<=ground+.03) {p.z=ground+.03;p.vx*=.18;p.vy*=.18;p.vz=0;p.life=Math.min(p.life,.34);}
   if(p.life<=0) bloodMotes.splice(i,1);
  }
  for(let i=bloodPools.length-1;i>=0;i--) {
@@ -1317,7 +1446,7 @@ function paintBlood(view,dx,dy,look,w,h) {
   const wx=pool.x-view.x,wz=pool.y-view.y,forward=wx*dx+wz*dy;
   if(forward<.5||forward>30) continue;
   const sx=w/2+(wz*dx-wx*dy)*focal/forward;
-  const sy=h*(.5+look)+1.35*focal/forward;
+  const sy=h*(.5+look)+(eye-(pool.elev||0)-.01)*focal/forward;
   const radius=pool.size*focal/forward;
   if(sx<-radius||sx>w+radius) continue;
   const alpha=clamp(pool.life/6,0,.55);
@@ -1330,7 +1459,7 @@ function paintBlood(view,dx,dy,look,w,h) {
   const wx=drop.x-view.x,wz=drop.y-view.y,forward=wx*dx+wz*dy;
   if(forward<.35||forward>26) continue;
   const sx=w/2+(wz*dx-wx*dy)*focal/forward;
-  const sy=h*(.5+look)+(1.35-drop.z)*focal/forward;
+  const sy=h*(.5+look)+(eye-drop.z)*focal/forward;
   if(sx<-10||sx>w+10||sy<-10||sy>h+10) continue;
   const radius=clamp(drop.size*focal/forward,1,5);
   ctx.fillStyle='rgba(146,13,11,'+clamp(drop.life*1.7,0,.9)+')';
@@ -1341,8 +1470,8 @@ function paintBlood(view,dx,dy,look,w,h) {
   const ax=tracer.x1-view.x,az=tracer.y1-view.y,af=ax*dx+az*dy;
   const bx=tracer.x2-view.x,bz=tracer.y2-view.y,bf=bx*dx+bz*dy;
   if(af<.3||bf<.3) continue;
-  const sx1=w/2+(az*dx-ax*dy)*focal/af,sy1=h*(.5+look)+(1.35-tracer.z1)*focal/af;
-  const sx2=w/2+(bz*dx-bx*dy)*focal/bf,sy2=h*(.5+look)+(1.35-tracer.z2)*focal/bf;
+  const sx1=w/2+(az*dx-ax*dy)*focal/af,sy1=h*(.5+look)+(eye-tracer.z1)*focal/af;
+  const sx2=w/2+(bz*dx-bx*dy)*focal/bf,sy2=h*(.5+look)+(eye-tracer.z2)*focal/bf;
   const alpha=clamp(tracer.life/tracer.maxLife,0,1);
   ctx.strokeStyle='rgba(255,236,186,'+(alpha*.85)+')';
   ctx.lineWidth=Math.max(1,2.2*alpha);
@@ -1358,8 +1487,9 @@ function paintObjectiveBeacon(view,dx,dy,look,w,h) {
  const forward=wx*dx+wz*dy;
  if(forward<1||forward>42) return;
  const sx=w/2+(wz*dx-wx*dy)*focal/forward;
- const ground=h*(.5+look)+1.35*focal/forward;
- const top=h*(.5+look)+(1.35-3.4)*focal/forward;
+ const base=floorAt(objective.x,objective.y);
+ const ground=h*(.5+look)+(eye-base)*focal/forward;
+ const top=h*(.5+look)+(eye-base-3.4)*focal/forward;
  if(sx<-40||sx>w+40) return;
  const pulse=.5+.5*Math.sin(frames*.08);
  const width=clamp(60/forward,6,44);
@@ -1369,7 +1499,7 @@ function paintObjectiveBeacon(view,dx,dy,look,w,h) {
  grad.addColorStop(1,'rgba(214,245,111,'+(.16+.12*pulse)+')');
  ctx.save();ctx.globalCompositeOperation='lighter';ctx.fillStyle=grad;
  ctx.fillRect(sx-width/2,top,width,ground-top);
- const markY=h*(.5+look)+(1.35-1.7)*focal/forward,size=clamp(11/forward,.0,12)+4+pulse*2;
+ const markY=h*(.5+look)+(eye-base-1.7)*focal/forward,size=clamp(11/forward,.0,12)+4+pulse*2;
  ctx.fillStyle='rgba(214,245,111,'+(.6+.3*pulse)+')';
  ctx.beginPath();ctx.moveTo(sx,markY-size);ctx.lineTo(sx+size,markY);ctx.lineTo(sx,markY+size);ctx.lineTo(sx-size,markY);ctx.closePath();ctx.fill();
  ctx.restore();
@@ -1416,6 +1546,8 @@ function update(dt) {
    footstep(running?.047:.031,0,false,running?1.04:.91,newBeat);
   }
  } else step+=dt*1.3;
+ const targetEye=1.35+floorAt(player.x,player.y);
+ eye+=(targetEye-eye)*(1-Math.exp(-dt*11));
  if(firing||keys.has('Space')) fire();
  updateAcid(dt);
  updateGrenades(dt);
@@ -1485,9 +1617,11 @@ function update(dt) {
 }
 
 function zombiePose(z,view,advance=0) {
- const friendly=!!z.friendly, kind=z.kind||types[z.type], heavy=!friendly&&(z.type==='brute'||z.type==='boss'), quick=!friendly&&z.type==='runner';
+ const friendly=!!z.friendly, squad=z.squad||{}, qin=friendly&&squad.id==='qin', lin=friendly&&squad.id==='lin', qi=friendly&&squad.id==='qi';
+ const kind=z.kind||types[z.type], heavy=!friendly&&(z.type==='brute'||z.type==='boss'), quick=!friendly&&z.type==='runner';
  const shield=z.type==='shield',spitter=z.type==='spitter',screamer=z.type==='screamer',bomber=z.type==='bomber';
- const scale=kind.height/1.75, width=heavy?1.26:shield?1.12:quick||spitter?.89:1;
+ const scale=kind.height/1.75, width=(heavy?1.26:shield?1.12:quick||spitter?.89:1)*(friendly?(squad.build||1):1);
+ const hair=friendly?(squad.hairColor||[.09,.08,.07]):[0,0,0], accent=friendly?(squad.accentColor||[.7,.7,.7]):[0,0,0];
  const yaw=z.yaw??Math.atan2(view.y-z.y,view.x-z.x);
  const fz=Math.sin(yaw),fx=Math.cos(yaw),rx=-fz,rz=fx;
  const phase=((z.anim??0)+advance)*TAU/6, stride=Math.sin(phase);
@@ -1554,9 +1688,29 @@ function zombiePose(z,view,advance=0) {
   }
  }
  if(friendly) {
-  bone([.205,1.02+bob,.20],[.205,1.04+bob,.57],.028,.034,[.11,.115,.12],3);
-  orb(.205,1.0+bob,.38,.034,.052,.11,[.14,.10,.06],0);
-  orb(-.055,1.0+bob,-.02,.075,.19,.055,[.16,.18,.20],3);
+  const gunEnd=qin?.74:lin?.40:.59, gunSize=qin?.038:lin?.026:.030, gunY=qin?1.13:lin?1.08:1.10;
+  bone([.205,gunY+bob,.20],[.205,gunY+.02+bob,gunEnd],gunSize,.036,[.105,.11,.118],3);
+  orb(.205,gunY-.01+bob,.36,.033,.050,.10,[.14,.10,.06],0);
+  if(qin) {
+   orb(-.062,1.135+bob,.168,.072,.145,.008,[.28,.235,.09],3);
+   orb(.062,1.135+bob,.168,.072,.145,.008,[.28,.235,.09],3);
+   orb(0,1.052+bob,.173,.180,.020,.008,accent,3);
+   orb(-.078,1.205+bob,.176,.017,.075,.006,accent,3);
+   orb(.078,1.205+bob,.176,.017,.075,.006,accent,3);
+   orb(0,1.155+bob,-.176,.135,.11,.010,[.25,.235,.13],3);
+  } else if(lin) {
+   orb(0,1.17+bob,.174,.062,.062,.012,[.88,.90,.87],3);
+   orb(0,1.17+bob,.181,.040,.014,.008,accent,3);
+   orb(0,1.17+bob,.181,.014,.040,.008,accent,3);
+   orb(-.218,1.21+bob,.060,.034,.022,.034,[.86,.87,.84],3);
+   orb(-.070,1.04+bob,.060,.052,.085,.030,[.30,.32,.32],3);
+  } else {
+   orb(0,1.205+bob,.170,.132,.013,.006,[.70,.82,.86],0);
+   orb(0,1.075+bob,.170,.132,.011,.006,[.70,.82,.86],0);
+   orb(0,1.04+bob,-.170,.135,.20,.055,[.13,.19,.24],3);
+   orb(0,1.19+bob,-.196,.10,.052,.022,[.10,.14,.18],3);
+   for(const side of [-1,1]) orb(side*.092,1.14+bob,.052,.020,.20,.018,[.12,.16,.21],3);
+  }
  } else {
   orb(-.055*width,1.075+bob,.108,.044,.062,.014,[.21,.035,.03],0,body);
   orb(.072*width,1.01+bob,.104,.032,.042,.012,[.17,.028,.024],0,body);
@@ -1577,10 +1731,44 @@ function zombiePose(z,view,advance=0) {
  }
  const cy=1.525+bob-.024*attack+(screamer&&z.specialWindup>0?.027:0),cz=lean+.019+reach*.33,cx=tilt+(heavy?-.012:.005);
  bone([0,1.290+bob,.068],[cx,cy-.087,cz],.055*width,.069,skin,1,body);
- orb(cx,cy,cz,.104*width,.161,.096,skin,1,head,screamer?4:1);
+ orb(cx,cy,cz,.104*width,.161,.096,skin,1,head,friendly?0:(screamer?4:1));
  if(shield) orb(cx,cy+.102,cz-.027,.113,.075,.105,[.235,.28,.31],3);
  for(const side of [-1,1]) {
   orb(cx+side*.096*width,cy-.017,cz-.023,.015,.032,.021,skin,1);
+ }
+ if(friendly) {
+  const eyeX=.034*width,eyeY=cy+.018,eyeD=cz+.089;
+  for(const side of [-1,1]) {
+   orb(cx+side*eyeX,eyeY,eyeD,.012,.009,.006,[.85,.85,.79],3);
+   orb(cx+side*eyeX,eyeY,eyeD+.004,.0055,.006,.004,[.05,.045,.04],3);
+   orb(cx+side*eyeX,eyeY+.024,eyeD-.008,.021,.005,.005,hair,0);
+  }
+  orb(cx,cy-.004,cz+.095,.015,.030,.018,skin,1);
+  if(squad.mask) {
+   orb(cx,cy-.060,cz+.082,.062,.034,.015,[.72,.78,.76],3);
+   orb(cx,cy-.060,cz+.097,.048,.006,.005,[.60,.66,.64],3);
+   for(const side of [-1,1]) bone([cx+side*.058,cy-.045,cz+.040],[cx+side*.076,cy-.058,cz-.050],.005,.005,[.55,.60,.58],3);
+  } else {
+   orb(cx,cy-.052,cz+.087,.034,.008,.007,[.33,.15,.13],3);
+  }
+  if(squad.beard) {
+   const beard=[.24,.19,.15];
+   for(const x of [-.036,-.012,.012,.036]) orb(cx+x*width,cy-.080,cz+.060,.022,.030,.018,beard,3);
+   orb(cx,cy-.038,cz+.084,.032,.008,.008,beard,3);
+  }
+  orb(cx,cy+.078,cz-.036,.112*width,.078,.098,hair,0);
+  orb(cx,cy+.030,cz-.090,.100*width,.125,.058,hair,0);
+  orb(cx,cy+.048,cz+.076,.100*width,.020,.036,hair,0);
+  if(squad.gear==='cap') {
+   orb(cx,cy+.030,cz+.084,.106*width,.016,.052,hair,3);
+  } else if(squad.gear==='ponytail') {
+   for(const side of [-1,1]) orb(cx+side*.088*width,cy+.018,cz+.010,.028,.095,.062,hair,0);
+   bone([cx,cy+.020,cz-.108],[cx,cy-.095,cz-.190],.036,.044,hair,0,body);
+   orb(cx,cy-.115,cz-.198,.042,.055,.042,hair,0);
+  } else if(squad.gear==='hood') {
+   orb(cx,cy+.045,cz-.062,.120*width,.118,.102,hair,0);
+   for(const side of [-1,1]) orb(cx+side*.100*width,cy+.002,cz-.004,.026,.030,.022,accent,3);
+  }
  }
  if(z.dead||z.downed) {
   const fall=z.dead?Math.min(1,(z.deathT??0)/.62):Math.min(1,(z.downT??0)/.62);
@@ -1609,13 +1797,15 @@ function zombiePose(z,view,advance=0) {
    if(sink>0) for(const part of parts) part.center[1]-=sink*.78;
   }
  }
+ const elev=floorAt(z.x,z.y);
+ if(elev>0) for(const part of parts) part.center[1]+=elev;
  return parts;
 }
 function hitModel(z,wall,dx,dy,slope) {
  const forward=(z.x-player.x)*dx+(z.y-player.y)*dy;
  const side=(z.y-player.y)*dx-(z.x-player.x)*dy;
  if(forward<-.5||forward>wall+.6||Math.abs(side)>.65) return null;
- const rayVector=[dx,slope,dy], origin=[player.x,1.35,player.y];
+ const rayVector=[dx,slope,dy], origin=[player.x,eye,player.y];
  let bestDepth=wall,tag=null;
  for(const {center,axes,tag:part} of zombiePose(z,player)) {
   if(!part) continue;

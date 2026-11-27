@@ -587,6 +587,127 @@ for(const [id,annex] of Object.entries(ANNEXES)) {
  def.wallSigns.push({x,z,y,text:annex.name,sub:annex.sub,w:2.42,h:.57,accent:'#d3b16f'});
 }
 
+
+const WING_NAMES={
+ yard:['东侧货场','南侧堆场','中央货运通道'],
+ subway:['东侧站厅','南侧换乘厅','中央连廊'],
+ tunnel:['东侧管廊','南侧泵站','中央管廊'],
+ hospital:['东翼病房','南翼诊疗区','中央连廊'],
+ prison:['东侧监区','南侧放风场','中央巡道']
+};
+function expandWorldMap(def,id) {
+ const oldCols=def.rows[0].length,oldRows=def.rows.length,extra=20,cols=oldCols+extra,rows=oldRows+extra;
+ const g=def.rows.map(row=>row.split(''));
+ const eastGates=[6,15,24,35],southGates=[8,21,34];
+ // 保留旧设施，用新列宽重建索引
+ const facilities=[];
+ for(let y=0;y<oldRows;y++) for(let x=0;x<oldCols;x++) {
+  const kind=def.facilities.get(y*oldCols+x);
+  if(kind) facilities.push([x,y,kind]);
+ }
+ // 旧东墙变内部墙，开四道门；东侧补 20 列
+ for(let y=0;y<oldRows;y++) {
+  if(y>0&&y<oldRows-1) g[y][oldCols-1]=eastGates.includes(y)?'.':'#';
+  for(let x=oldCols;x<cols;x++) g[y][x]='.';
+  g[y][cols-1]='#';
+ }
+ // 旧南墙开三道门；南侧补 20 行
+ for(const x of southGates) g[oldRows-1][x]='.';
+ for(let y=oldRows;y<rows;y++) g.push(Array.from({length:cols},(_,x)=>x===0||x===cols-1?'#':'.'));
+ g[rows-1].fill('#');
+ // 房间网格
+ const carve=(x0,y0,x1,y1,cw,ch)=>{
+  for(let x=x0+cw;x<x1;x+=cw) for(let y=y0;y<=y1;y++) g[y][x]='#';
+  for(let y=y0+ch;y<y1;y+=ch) for(let x=x0;x<=x1;x++) g[y][x]='#';
+  for(let x=x0+cw;x<x1;x+=cw) for(let y=y0;y<=y1;y+=ch) {
+   const doorY=Math.min(y1-1,y+Math.floor(ch*.42));
+   g[doorY][x]='.';if(doorY+1<y1)g[doorY+1][x]='.';
+  }
+  for(let y=y0+ch;y<y1;y+=ch) for(let x=x0;x<=x1;x+=cw) {
+   const doorX=Math.min(x1-1,x+Math.floor(cw*.42));
+   g[y][doorX]='.';if(doorX+1<x1)g[y][doorX+1]='.';
+  }
+ };
+ carve(oldCols,1,cols-2,rows-2,6,8);
+ carve(1,oldRows,oldCols-2,rows-2,8,6);
+ // 主连廊
+ for(let y=1;y<rows-1;y++) {g[y][oldCols+8]='.';g[y][oldCols+9]='.';}
+ for(let x=1;x<cols-1;x++) {g[oldRows+9][x]='.';g[oldRows+10][x]='.';}
+ // 旧门到新区的引导通道
+ for(const y of eastGates) for(let x=oldCols-1;x<=oldCols+3;x++) {g[y][x]='.';if(y+1<rows-1)g[y+1][x]='.';}
+ for(const x of southGates) for(let y=oldRows-1;y<=oldRows+3;y++) {g[y][x]='.';if(x+1<cols-1)g[y][x+1]='.';}
+ for(let y=0;y<rows;y++) {g[y][0]='#';g[y][cols-1]='#';}
+ for(let x=0;x<cols;x++) {g[0][x]='#';g[rows-1][x]='#';}
+ // 每个房间放一件主题设施
+ const style=def.theme.style;
+ const facilityKind={yard:'freight',subway:'cart',tunnel:'pump',hospital:'bed',prison:'exercise'}[style]||'cart';
+ const facilityTile={yard:'C',subway:'C',tunnel:'M',hospital:'W',prison:'W'}[style]||'C';
+ const roomCells=[];
+ for(let x=oldCols+3;x<cols-2;x+=6) for(let y=5;y<rows-2;y+=8) roomCells.push([x,y]);
+ for(let x=5;x<oldCols-2;x+=8) for(let y=oldRows+3;y<rows-2;y+=6) roomCells.push([x,y]);
+ for(const [x,y] of roomCells) {
+  if(x===oldCols+8||x===oldCols+9||y===oldRows+9||y===oldRows+10) continue;
+  if(g[y]?.[x]!=='.') continue;
+  g[y][x]=facilityTile;facilities.push([x,y,facilityKind]);
+ }
+ // 灯、补给、出生点、区域
+ const lightHeight={yard:2.8,subway:3.0,tunnel:2.7,hospital:3.15,prison:3.4}[style]||3;
+ const cool=style==='hospital'||style==='subway',tint=cool?-1:1;
+ for(let y=9;y<rows-6;y+=12) def.lights.push([oldCols+8.5,y+.5,lightHeight,tint*1.0]);
+ for(let x=9;x<cols-6;x+=12) def.lights.push([x+.5,oldRows+9.5,lightHeight,tint*1.0]);
+ def.supplies.push([oldCols+8.5,10.5],[oldCols+8.5,34.5],[10.5,oldRows+9.5],[44.5,oldRows+9.5]);
+ def.spawnPoints.push([oldCols+4.5,4.5],[oldCols+14.5,20.5],[oldCols+4.5,44.5],[24.5,oldRows+4.5],[40.5,oldRows+15.5],[12.5,oldRows+16.5]);
+ const names=WING_NAMES[id]||['东翼','南翼','中央通道'];
+ def.zones.push({name:names[0],x0:oldCols,y0:1,x1:cols-2,y1:rows-2});
+ def.zones.push({name:names[1],x0:1,y0:oldRows,x1:oldCols-2,y1:rows-2});
+ def.zones.push({name:names[2],x0:oldCols+7,y0:1,x1:oldCols+10,y1:rows-2});
+ def.rows=g.map(row=>row.join(''));
+ def.facilities=new Map(facilities.map(([x,y,kind])=>[y*cols+x,kind]));
+ def.expanded={oldCols,oldRows,cols,rows};
+}
+for(const id of Object.keys(MAPS)) expandWorldMap(MAPS[id],id);
+
+function buildMezzanine(def,id) {
+ if(id!=='hospital'&&id!=='subway') return;
+ const cols=def.rows[0].length,rows=def.rows.length;
+ const g=def.rows.map(row=>row.split(''));
+ const height=id==='hospital'?3.0:2.4;
+ const x0=54,x1=60,y0=3,y1=12,sx0=54,sx1=55,sy0=13,sy1=id==='hospital'?20:19;
+ for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++) g[y][x]='.';
+ for(let y=sy0;y<=sy1;y++) for(let x=sx0;x<=sx1;x++) g[y][x]='.';
+ for(let x=53;x<=56;x++) g[sy1+1][x]='.';
+ for(let x=53;x<=61;x++) g[2][x]='#';
+ for(let y=2;y<=13;y++) {g[y][53]='#';g[y][61]='#';}
+ for(let x=56;x<=61;x++) g[13][x]='#';
+ for(let y=13;y<=sy1;y++) {g[y][53]='#';g[y][56]='#';}
+ def.platforms=[{x0,y0,x1,y1,h:height}];
+ def.stairs=[{x0:sx0,x1:sx1,y0:sy0,y1:sy1,top:height,bottom:0}];
+ def.ceilingHole={x0:52,y0:1,x1:61,y1:sy1+2};
+ def.mezzanine={x0,y0,x1,y1,h:height,stairs:{x0:sx0,x1:sx1,y0:sy0,y1:sy1}};
+ def.zones.push({name:'东翼二层连廊',x0:53,y0:2,x1:61,y1:13});
+ def.lights.push([57.5,7.5,height+3.4,-3.0],[59.5,5.2,height+1.8,-2.0],[55.0,10.2,height+1.8,-2.0],[54.5,sy0+3,height+1.6,-.5]);
+ def.supplies.push([58.5,6.5],[56.5,10.5]);
+ for(const [fx,fy,kind,tile] of [[57,4,'bed','W'],[59,9,'bed','W'],[55,5,'cart','C'],[56,8,'cart','C']]) {
+  if(g[fy]?.[fx]!=='.') continue;
+  g[fy][fx]=tile;def.facilities.set(fy*cols+fx,kind);
+ }
+ def.rows=g.map(row=>row.join(''));
+}
+function buildMapHeights(def) {
+ const cols=def.rows[0].length,rows=def.rows.length;
+ const heights=new Float32Array(cols*rows);
+ for(const p of def.platforms||[]) for(let y=p.y0;y<=p.y1;y++) for(let x=p.x0;x<=p.x1;x++) heights[y*cols+x]=p.h;
+ for(const s of def.stairs||[]) for(let y=s.y0;y<=s.y1;y++) for(let x=s.x0;x<=s.x1;x++) {
+  const t=(y-s.y0)/Math.max(1,s.y1-s.y0);
+  heights[y*cols+x]=s.top+(s.bottom-s.top)*t;
+ }
+ def.heights=heights;
+}
+buildMezzanine(MAPS.hospital,'hospital');
+buildMezzanine(MAPS.subway,'subway');
+for(const id of Object.keys(MAPS)) buildMapHeights(MAPS[id]);
+
+
 let MAP=MAPS.yard,selectedMap='yard',columns=COLS,rows=ROWS,layout,map,supplies,spawnPoints,worldStart,preview,previewEnemies=[];
 let yard3D=null,best=0;
 function bestKey(id) {return 'blackout-best-'+id;}
@@ -771,7 +892,7 @@ const STORY_CHAPTERS=[
  },
  {
   map:'subway',code:'第二章',title:'末班车',place:'地铁站 · 03:05',
-  brief:'检修通道能绕过闸机，但停摆的列车里并不安静。穿过月台，抵达西南换乘口。',
+  brief:'检修通道能绕过闸机，但停摆的列车里并不安静。穿过东侧新站厅，登上二层连廊，从高处绕开月台。',
   intro:[
    ['qi','检修库有条路，不经过闸机。'],
    ['qin','这地方黑得像口棺材。'],
@@ -779,12 +900,12 @@ const STORY_CHAPTERS=[
    ['narr','远处，有什么东西在车厢里敲打车门。']
   ],
   acts:[
-   {type:'reach',label:'抵达北侧站厅夹层',point:[38.5,1.5],cap:6,
-    dialogue:[['qi','顺着月台走，别碰列车。']]},
+   {type:'reach',label:'抵达东侧站厅',point:[47.5,10.5],cap:6,
+    dialogue:[['qi','这边是新站厅，跟我来。']]},
    {type:'clear',label:'肃清停摆列车周边',count:8,cap:5,
     dialogue:[['lin','它们就在车厢里……数量不少。']]},
-   {type:'reach',label:'前往西南换乘通道',point:[4.5,29.5],cap:6,
-    dialogue:[['qin','最后一段了，撑住。']]}
+   {type:'reach',label:'登上东侧二层连廊',point:[58.5,7.5],cap:6,
+    dialogue:[['qin','上楼，从上面能看清整个站台。']]}
   ],
   outro:'你们钻进换乘通道。尽头传来水泵的轰鸣，那是通往地下隧道的路。林夏一路没说话，只是把样本箱抱得更紧。'
  },
@@ -817,11 +938,11 @@ const STORY_CHAPTERS=[
    ['narr','广播循环播放着一段录音：请留在病房，等待夜班主治查房。']
   ],
   acts:[
-   {type:'reach',label:'前往西侧诊疗区',point:[3.5,20.5],cap:6,
-    dialogue:[['lin','样本柜在诊疗区最里面。']]},
+   {type:'reach',label:'前往东翼病房',point:[47.5,20.5],cap:6,
+    dialogue:[['lin','样本柜在东翼最里面。']]},
    {type:'clear',label:'肃清门诊走廊',count:9,cap:6,
     dialogue:[['qin','门后面有东西。']]},
-   {type:'boss',label:'击倒夜班主治',point:[39.5,12.5],cap:3,
+   {type:'boss',label:'击倒夜班主治 · 二层连廊',point:[57.5,7.5],cap:3,
     dialogue:[['lin','那不是老师了……开枪。'],['radio','所有单位注意，撤离车队将在 05:40 离开北岭大桥。']]}
   ],
   outro:'林夏从主治的白大褂里抽出研究记录：感染通过供水系统扩散，源头就在地下泵房。撤离车队在北岭大桥，而最近的桥头堡是旧监狱。'
@@ -847,7 +968,7 @@ const STORY_CHAPTERS=[
  }
 ];
 const STORY_SQUAD=[
- {id:'qin',name:'老秦',role:'霰弹枪',clothColor:[.205,.235,.165],skinColor:[.52,.44,.35],pantsColor:[.21,.215,.19],height:1.82,damage:27,rate:.98,line:'码头不会骗人。'},
- {id:'lin',name:'林夏',role:'手枪 · 医疗',clothColor:[.30,.31,.34],skinColor:[.55,.47,.39],pantsColor:[.26,.27,.28],height:1.70,damage:18,rate:.74,line:'撑住，我带了药品。'},
- {id:'qi',name:'小七',role:'冲锋枪',clothColor:[.22,.30,.36],skinColor:[.53,.45,.35],pantsColor:[.20,.22,.24],height:1.66,damage:12,rate:.36,line:'跟着我，这条路我熟。'}
+ {id:'qin',name:'老秦',role:'霰弹枪 · 前锋',clothColor:[.20,.24,.17],skinColor:[.58,.48,.39],pantsColor:[.20,.21,.19],hairColor:[.09,.085,.075],accentColor:[.87,.58,.20],build:1.10,height:1.82,damage:27,rate:.98,range:8.5,gear:'cap',beard:true,line:'码头不会骗人。'},
+ {id:'lin',name:'林夏',role:'手枪 · 医疗',clothColor:[.56,.60,.59],skinColor:[.60,.51,.43],pantsColor:[.30,.32,.33],hairColor:[.09,.075,.065],accentColor:[.72,.14,.12],build:.93,height:1.70,damage:18,rate:.74,range:11,gear:'ponytail',mask:true,line:'撑住，我带了药品。'},
+ {id:'qi',name:'小七',role:'冲锋枪 · 斥候',clothColor:[.19,.31,.42],skinColor:[.56,.47,.36],pantsColor:[.18,.21,.25],hairColor:[.07,.075,.08],accentColor:[.74,.86,.90],build:.96,height:1.66,damage:12,rate:.36,range:12,gear:'hood',backpack:true,line:'跟着我，这条路我熟。'}
 ];
