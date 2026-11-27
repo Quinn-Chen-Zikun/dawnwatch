@@ -1694,7 +1694,7 @@ function zombiePose(z,view,advance=0) {
   const pelvis=[side*.087*width,hip-.04,0],knee=[side*.101*width,.47+lift*.22,strideLeg*.093+.045];
   const ankle=[side*.107*width,.11+lift,strideLeg*.175-.028];
   bone(pelvis,knee,.079*width,.080,pants,0,body);
-  orb(...knee,.061*width,.066,.064,pants,0);
+  orb(...knee,.047*width,.050,.048,pants,0);
   bone(knee,ankle,.059*width,.057,pants,0,body);
   orb(ankle[0],ankle[1]-.037,ankle[2]+.032,.066*width,.053,.118,boot,3,body);
   orb(ankle[0],ankle[1]-.067,ankle[2]+.033,.064*width,.022,.111,[.078,.082,.078],3);
@@ -1702,16 +1702,19 @@ function zombiePose(z,view,advance=0) {
   const s=[side*.177*width,shoulders-(side*.016),lean];
   const elbow=[side*.222*width,1.044+bob+liftArm+reach*.24,.145+armSwing+reach*.53];
   const wrist=[side*.204*width,1.019+bob+liftArm*1.8+reach*.67,.226+armSwing+reach+(side>0?.077:0)];
-  orb(...s,.068*width,.080,.070,cloth,0);
+  orb(...s,.056*width,.064,.057,cloth,0);
   const sleeve=s.map((n,i)=>n+(elbow[i]-n)*(heavy?.69:quick?.83:.53));
   bone(s,sleeve,.067*width,.065,cloth,0,body);
   bone(sleeve,elbow,.053*width,.056,skin,1,body);
-  orb(...elbow,.047*width,.049,.052,skin,1);
+  orb(...elbow,.036*width,.038,.040,skin,1);
   bone(elbow,wrist,.046*width,.051,skin,1,body);
   orb(wrist[0],wrist[1]-.007,wrist[2]+.037,.048*width,.027,.052,skin,1,body);
+  // 袖管从肩延续到前臂，遮住上臂与肘部的拼装接缝（不参与判定）
+  bone(s,[s[0]+(elbow[0]-s[0])*.80,s[1]+(elbow[1]-s[1])*.80,s[2]+(elbow[2]-s[2])*.80],.059*width,.062,cloth,0);
+  orb(s[0]+(elbow[0]-s[0])*.80,s[1]+(elbow[1]-s[1])*.80,s[2]+(elbow[2]-s[2])*.80,.045*width,.046,.048,shadowCloth,0);
   for(let digit=-1;digit<=1;digit++) {
-   const x=wrist[0]+digit*.024*width;
-   bone([x,wrist[1]-.012,wrist[2]+.053],[x+digit*.010,wrist[1]-.033,wrist[2]+.088-Math.abs(digit)*.008],.012,.014,skin,1);
+   const x=wrist[0]+digit*.021*width;
+   bone([x,wrist[1]-.012,wrist[2]+.053],[x+digit*.008,wrist[1]-.030,wrist[2]+.080-Math.abs(digit)*.007],.009,.011,skin,1);
   }
  }
  if(friendly) {
@@ -1719,6 +1722,10 @@ function zombiePose(z,view,advance=0) {
   bone([.205,gunY+bob,.20],[.205,gunY+.02+bob,gunEnd],gunSize,.036,[.105,.11,.118],3);
   orb(.205,gunY-.01+bob,.36,.033,.050,.10,[.14,.10,.06],0);
   if(qin) {
+   // 老秦：厚重防寒夹克 + 回收护甲背心，轮廓最宽
+   orb(0,1.105+bob,0,.178*width,.185,.118,cloth,0);
+   orb(0,1.235+bob,-.004,.192*width,.115,.116,shadowCloth,0);
+   orb(0,.975+bob,.01,.166*width,.115,.108,cloth,0);
    orb(-.062,1.135+bob,.168,.072,.145,.008,[.28,.235,.09],3);
    orb(.062,1.135+bob,.168,.072,.145,.008,[.28,.235,.09],3);
    orb(0,1.052+bob,.173,.180,.020,.008,accent,3);
@@ -1726,22 +1733,38 @@ function zombiePose(z,view,advance=0) {
    orb(.078,1.205+bob,.176,.017,.075,.006,accent,3);
    orb(0,1.155+bob,-.176,.135,.11,.010,[.25,.235,.13],3);
   } else if(lin) {
-   orb(0,1.17+bob,.174,.062,.062,.012,[.88,.90,.87],3);
-   orb(0,1.17+bob,.181,.040,.014,.008,accent,3);
-   orb(0,1.17+bob,.181,.014,.040,.008,accent,3);
-   orb(-.218,1.21+bob,.060,.034,.022,.034,[.86,.87,.84],3);
-   orb(-.070,1.04+bob,.060,.052,.085,.030,[.30,.32,.32],3);
+   // 林夏：修身医疗长风衣 + 斜挎药袋，轮廓最窄
+   orb(0,1.075+bob,.002,.152*width,.190,.102,[.315,.325,.305],0);
+   orb(0,.955+bob,.012,.154*width,.115,.098,[.255,.268,.255],0);
+   orb(0,1.17+bob,.174,.056,.056,.010,[.84,.86,.83],3);
+   orb(0,1.17+bob,.180,.034,.012,.007,accent,3);
+   orb(0,1.17+bob,.180,.012,.034,.007,accent,3);
+   orb(-.218,1.21+bob,.060,.028,.019,.028,[.82,.83,.80],3);
+   orb(-.070,1.04+bob,.060,.046,.076,.026,[.28,.30,.30],3);
+   bone([-.104,1.330+bob,.055],[.108,1.010+bob,.088],.021,.010,[.40,.28,.16],3);
+   orb(.112,.990+bob,.086,.046,.058,.028,[.215,.225,.195],3);
+   orb(.112,.990+bob,.108,.030,.010,.006,accent,3);
   } else {
+   // 小七：兜帽短斗篷 + 层叠围巾，轮廓最碎
+   orb(0,1.105+bob,0,.172*width,.165,.112,[.155,.195,.225],0);
+   orb(0,1.275+bob,-.008,.196*width,.070,.112,[.125,.165,.195],0);
+   orb(0,.945+bob,.010,.158*width,.100,.100,[.140,.170,.190],0);
    orb(0,1.205+bob,.170,.132,.013,.006,[.70,.82,.86],0);
    orb(0,1.075+bob,.170,.132,.011,.006,[.70,.82,.86],0);
    orb(0,1.04+bob,-.170,.135,.20,.055,[.13,.19,.24],3);
    orb(0,1.19+bob,-.196,.10,.052,.022,[.10,.14,.18],3);
    for(const side of [-1,1]) orb(side*.092,1.14+bob,.052,.020,.20,.018,[.12,.16,.21],3);
+   orb(0,1.292+bob,.052,.108,.024,.088,accent,0);
+   orb(.072,1.238+bob,.072,.028,.070,.020,accent,3);
   }
  } else {
+  // 丧尸：将衣领与躯干连成整块，削弱球体拼装感
+  orb(0,1.290+bob,lean-.006,.152*width,.050,.098,shadowCloth,0);
+  orb(0,1.075+bob,-.004,.152*width,.170,.086,cloth,0);
+  orb(0,.952+bob,.004,.150*width,.095,.088,cloth,0);
   orb(-.055*width,1.075+bob,.108,.044,.062,.014,[.21,.035,.03],0,body);
   orb(.072*width,1.01+bob,.104,.032,.042,.012,[.17,.028,.024],0,body);
-  orb(.004,1.215+bob,.135,.028,.05,.015,[.24,.045,.034],1);
+  orb(.004,1.215+bob,.135,.020,.032,.008,[.24,.045,.034],1);
  }
  if(shield) {
   const plateY=.96+bob,plateZ=.353+reach*.45;
@@ -1764,38 +1787,50 @@ function zombiePose(z,view,advance=0) {
   orb(cx+side*.096*width,cy-.017,cz-.023,.015,.032,.021,skin,1);
  }
  if(friendly) {
-  const eyeX=.034*width,eyeY=cy+.018,eyeD=cz+.089;
+  // 收紧五官：小眼白、扁平鼻梁、收敛嘴部，避免假人感
+  const eyeX=.030*width,eyeY=cy+.014,eyeD=cz+.090;
   for(const side of [-1,1]) {
-   orb(cx+side*eyeX,eyeY,eyeD,.012,.009,.006,[.85,.85,.79],3);
-   orb(cx+side*eyeX,eyeY,eyeD+.004,.0055,.006,.004,[.05,.045,.04],3);
-   orb(cx+side*eyeX,eyeY+.024,eyeD-.008,.021,.005,.005,hair,0);
+   orb(cx+side*eyeX,eyeY,eyeD,.0090,.0072,.0046,[.80,.80,.75],3);
+   orb(cx+side*eyeX,eyeY,eyeD+.003,.0046,.0050,.0030,[.06,.055,.05],3);
+   orb(cx+side*eyeX,eyeY+.021,eyeD-.011,.023,.0042,.0045,hair,0);
   }
-  orb(cx,cy-.004,cz+.095,.015,.030,.018,skin,1);
+  orb(cx,cy-.008,cz+.091,.011,.022,.009,skin,1);
   if(squad.mask) {
-   orb(cx,cy-.060,cz+.082,.062,.034,.015,[.72,.78,.76],3);
-   orb(cx,cy-.060,cz+.097,.048,.006,.005,[.60,.66,.64],3);
-   for(const side of [-1,1]) bone([cx+side*.058,cy-.045,cz+.040],[cx+side*.076,cy-.058,cz-.050],.005,.005,[.55,.60,.58],3);
+   orb(cx,cy-.058,cz+.076,.056,.030,.013,[.70,.74,.72],3);
+   orb(cx,cy-.058,cz+.087,.040,.005,.0035,[.54,.58,.56],3);
+   for(const side of [-1,1]) bone([cx+side*.050,cy-.046,cz+.034],[cx+side*.072,cy-.060,cz-.060],.004,.004,[.52,.56,.54],3);
   } else {
-   orb(cx,cy-.052,cz+.087,.034,.008,.007,[.33,.15,.13],3);
+   orb(cx,cy-.050,cz+.082,.028,.0062,.0048,[.31,.15,.13],3);
   }
   if(squad.beard) {
    const beard=[.24,.19,.15];
-   for(const x of [-.036,-.012,.012,.036]) orb(cx+x*width,cy-.080,cz+.060,.022,.030,.018,beard,3);
-   orb(cx,cy-.038,cz+.084,.032,.008,.008,beard,3);
+   for(const x of [-.030,-.010,.010,.030]) orb(cx+x*width,cy-.074,cz+.056,.018,.024,.014,beard,3);
   }
-  orb(cx,cy+.078,cz-.036,.112*width,.078,.098,hair,0);
-  orb(cx,cy+.030,cz-.090,.100*width,.125,.058,hair,0);
-  orb(cx,cy+.048,cz+.076,.100*width,.020,.036,hair,0);
+  // 自然发帽：一整块包覆头骨，取消箍状的黑带
+  orb(cx,cy+.088,cz-.020,.107*width,.078,.090,hair,0);
+  orb(cx,cy+.016,cz-.074,.101*width,.116,.064,hair,0);
+  orb(cx,cy+.135,cz-.030,.086*width,.030,.070,hair,0);
+  for(const side of [-1,1]) orb(cx+side*.088*width,cy+.022,cz-.006,.030,.088,.072,hair,0);
   if(squad.gear==='cap') {
-   orb(cx,cy+.030,cz+.084,.106*width,.016,.052,hair,3);
+   orb(cx,cy+.104,cz-.008,.110*width,.048,.104,hair,0);
+   orb(cx,cy+.056,cz+.082,.094*width,.018,.040,hair,3);
   } else if(squad.gear==='ponytail') {
-   for(const side of [-1,1]) orb(cx+side*.088*width,cy+.018,cz+.010,.028,.095,.062,hair,0);
+   orb(cx,cy+.052,cz-.018,.086*width,.048,.084,hair,0);
    bone([cx,cy+.020,cz-.108],[cx,cy-.095,cz-.190],.036,.044,hair,0,body);
-   orb(cx,cy-.115,cz-.198,.042,.055,.042,hair,0);
+   orb(cx,cy-.088,cz-.184,.036,.046,.034,hair,0);
   } else if(squad.gear==='hood') {
-   orb(cx,cy+.045,cz-.062,.120*width,.118,.102,hair,0);
-   for(const side of [-1,1]) orb(cx+side*.100*width,cy+.002,cz-.004,.026,.030,.022,accent,3);
+   // 兜帽：从后脑连续延伸到肩背
+   orb(cx,cy+.050,cz-.052,.124*width,.120,.106,hair,0);
+   orb(cx,cy-.030,cz-.086,.130*width,.085,.070,hair,0);
+   for(const side of [-1,1]) orb(cx+side*.102*width,cy-.030,cz-.004,.034,.075,.048,hair,0);
+   orb(cx,cy-.006,cz+.076,.072,.010,.024,accent,3);
+  } else {
+   orb(cx,cy+.070,cz+.062,.100*width,.042,.032,hair,0);
+   orb(cx,cy+.056,cz+.073,.070*width,.030,.022,hair,0);
   }
+  // 高领填住头颈接缝，颜色按角色区分
+  const collar=qi?[.16,.20,.23]:lin?[.58,.60,.58]:[.20,.235,.22];
+  orb(cx,cy-.118,cz-.006,.094*width,.038,.086,collar,0);
  }
  if(z.dead||z.downed) {
   const fall=z.dead?Math.min(1,(z.deathT??0)/.62):Math.min(1,(z.downT??0)/.62);

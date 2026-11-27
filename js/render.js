@@ -1,7 +1,7 @@
 'use strict';
 /* 破晓守望 · 渲染层：WebGL 场景、丧尸模型、枪械、血迹、雷达与天气 */
 const yardPhotography={Ground:'assets/ground.jpg',Concrete:'assets/concrete.jpg',Metal:'assets/metal.jpg',Wood:'assets/wood.jpg'};
-function makeViewMesh(kind,up) {
+function makeViewMeshLegacy(kind,up) {
  const data=[],body=0,steel=1,rubber=2,sleeve=3,glove=4,accent=5,optics=6;
  function vertex(p,n,mat,part) {data.push(...p,...n,mat,part);}
  function quad(a,b,c,d,n,mat,part) {
@@ -86,13 +86,17 @@ function makeViewMesh(kind,up) {
  if(up.damage>=2) tube([0,.06,front-.077],[0,.06,front+.01],.034,.030,steel);
  if(up.reload>=2) block(-.060,-.021,.155,.018,.041,.084,accent);
  const nearGrip=[.065,-.098,.062],support=pistol?[-.047,-.103,.156]:[-.059,-.033,shotgun?.533:smg?.335:.41];
- const wristR=[.117,-.168,.009],wristL=[support[0]-.055,support[1]-.069,support[2]-.078];
- tube([.345,-.367,-.14],wristR,.083,.052,sleeve);
- tube([-.33,-.39,-.12],wristL,.082,.049,sleeve,1);
- tube([.16,-.212,-.025],wristR,.056,.053,rubber);
- tube([wristL[0]-.041,wristL[1]-.033,wristL[2]-.025],wristL,.054,.050,rubber,1);
- tube(wristR,nearGrip,.045,.043,glove);
- tube(wristL,support,.045,.040,glove,1);
+ const wristR=[.117,-.168,.009],wristL=[support[0]-.032,support[1]-.050,support[2]-.038];
+ /* 袖管、护腕与手掌互相插入重叠，消除前臂与手之间的空隙 */
+ tube([.345,-.367,-.14],[.150,-.186,-.006],.086,.062,sleeve);
+ tube([-.33,-.39,-.12],[wristL[0]-.058,wristL[1]-.062,wristL[2]-.072],.084,.060,sleeve,1);
+ tube([.150,-.186,-.006],[wristR[0]+.008,wristR[1]-.002,wristR[2]-.002],.066,.058,rubber);
+ tube([wristL[0]-.058,wristL[1]-.062,wristL[2]-.072],[wristL[0]+.004,wristL[1]-.002,wristL[2]+.004],.064,.056,rubber,1);
+ tube(wristR,nearGrip,.054,.050,glove);
+ tube(wristL,support,.052,.048,glove,1);
+ /* 掌根垫满握把，左手从下方贴合虚构模型 */
+ tube([nearGrip[0]-.022,nearGrip[1]-.016,nearGrip[2]-.012],[nearGrip[0]+.012,nearGrip[1]+.010,nearGrip[2]+.014],.046,.040,glove,0,10);
+ tube([support[0]-.024,support[1]-.014,support[2]-.020],[support[0]+.018,support[1]+.012,support[2]+.014],.045,.039,glove,1,10);
  for(let i=0;i<4;i++) {
   const z=nearGrip[2]+i*.0173,y=nearGrip[1]-.013+i*.010;
   tube([.083,y,z],[.039,y+.023,z+.016],.0127,.0105,glove,0,8);
@@ -112,7 +116,7 @@ function makeViewMesh(kind,up) {
  return new Float32Array(data);
 }
 
-function makeViewPass(gl,program,playerLight) {
+function makeViewPassLegacy(gl,program,playerLight) {
  const shader=program(`
  attribute vec3 aPoint,aShadeNormal;
  attribute float aSurface,aPart;
@@ -181,7 +185,7 @@ function makeViewPass(gl,program,playerLight) {
   if(!mesh) {mesh={buffer:gl.createBuffer()};buffers.set(item.kind,mesh);}
   gl.bindBuffer(gl.ARRAY_BUFFER,mesh.buffer);
   if(mesh.key!==key) {
-   const data=makeViewMesh(item.kind,up);
+   const data=makeViewMeshLegacy(item.kind,up);
    gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);mesh.key=key;mesh.count=data.length/8;
   }
   gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
@@ -195,6 +199,424 @@ function makeViewPass(gl,program,playerLight) {
   gl.uniform3fv(u.uBody,rgb(skin.body));gl.uniform3fv(u.uMetal,rgb(skin.metal));gl.uniform3fv(u.uAccent,rgb(skin.accent));
   gl.uniform3fv(u.uEnvironment,MAP.theme.ambient);gl.uniform3fv(u.uPlayerLight,playerLight);
   gl.uniform1f(u.uFire,Math.min(1,muzzle/.055));
+  for(const [i,n,pos] of [[0,3,0],[1,3,12],[2,1,24],[3,1,28]]) {
+   gl.enableVertexAttribArray(attributes[i]);gl.vertexAttribPointer(attributes[i],n,gl.FLOAT,false,32,pos);
+  }
+  gl.drawArrays(gl.TRIANGLES,0,mesh.count);
+  attributes.forEach(i=>gl.disableVertexAttribArray(i));
+ };
+}
+
+/* 第一人称手持模型：抽象科幻制式轮廓、分层材质与连贯的双手接触。 */
+function makeViewMeshV2(kind,up) {
+ const data=[];
+ const BODY=0,METAL=1,POLY=2,SLEEVE=3,GLOVE=4,ACCENT=5,OPTIC=6,FLASH=7,STRAP=8,PAD=9;
+ const MAIN=0,MAG=1,SUPPORT=2,ACTION=3;
+ const pistol=kind==='pistol',shotgun=kind==='shotgun',dmr=kind==='dmr',smg=kind==='smg';
+ const front=pistol?.36:smg?.57:shotgun?.91:dmr?1.06:.83;
+ const coreEnd=pistol?.29:smg?.40:shotgun?.49:.55;
+ function vert(p,n,mat,part) {data.push(p[0],p[1],p[2],n[0],n[1],n[2],mat,part);}
+ function quad(a,b,c,d,n,mat,part) {for(const p of [a,b,c,a,c,d]) vert(p,n,mat,part);}
+ function box(x,y,z,w,h,d,mat,part=MAIN) {
+  const X=x+w,Y=y+h,Z=z+d;
+  const a=[x,y,z],b=[X,y,z],c=[X,y,Z],e=[x,y,Z],f=[x,Y,z],g=[X,Y,z],i=[X,Y,Z],j=[x,Y,Z];
+  quad(f,g,i,j,[0,1,0],mat,part);quad(e,c,b,a,[0,-1,0],mat,part);
+  quad(a,b,g,f,[0,0,-1],mat,part);quad(c,e,j,i,[0,0,1],mat,part);
+  quad(e,a,f,j,[-1,0,0],mat,part);quad(b,c,i,g,[1,0,0],mat,part);
+ }
+ const norm=v=>{const l=Math.hypot(v[0],v[1],v[2])||1;return [v[0]/l,v[1]/l,v[2]/l];};
+ const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+ function frameOf(a,b) {
+  const d=[b[0]-a[0],b[1]-a[1],b[2]-a[2]],L=Math.hypot(d[0],d[1],d[2])||1;
+  const D=[d[0]/L,d[1]/L,d[2]/L];
+  const ref=Math.abs(D[1])>.86?[0,0,1]:[0,1,0];
+  const S=norm(cross(ref,D)),T=cross(D,S);
+  return {D,S,T,L};
+ }
+ function tube(a,b,r0,r1,mat,part,sides=10,caps=true) {
+  const {D,S,T}=frameOf(a,b);
+  const ring=i=>{const t=i*TAU/sides;return S.map((v,j)=>Math.cos(t)*v+Math.sin(t)*T[j]);};
+  const pt=(p,m,r)=>[p[0]+m[0]*r,p[1]+m[1]*r,p[2]+m[2]*r];
+  for(let i=0;i<sides;i++) {
+   const m=ring(i),n=ring(i+1);
+   const ap=pt(a,m,r0),aq=pt(a,n,r0),bp=pt(b,m,r1),bq=pt(b,n,r1);
+   vert(ap,m,mat,part);vert(aq,n,mat,part);vert(bq,n,mat,part);
+   vert(ap,m,mat,part);vert(bq,n,mat,part);vert(bp,m,mat,part);
+  }
+  if(caps) for(let i=0;i<sides;i++) {
+   const m=ring(i),n=ring(i+1);
+   const ap=pt(a,m,r0),aq=pt(a,n,r0),bp=pt(b,m,r1),bq=pt(b,n,r1);
+   const back=[-D[0],-D[1],-D[2]];
+   vert(a,back,mat,part);vert(ap,back,mat,part);vert(aq,back,mat,part);
+   vert(b,D,mat,part);vert(bq,D,mat,part);vert(bp,D,mat,part);
+  }
+ }
+ function prism(a,b,w0,h0,w1,h1,mat,part,bevel=.18,caps=true) {
+  const {D,S,T}=frameOf(a,b);
+  const P=[[-.5,-.5+bevel],[-.5+bevel,-.5],[.5-bevel,-.5],[.5,-.5+bevel],
+   [.5,.5-bevel],[.5-bevel,.5],[-.5+bevel,.5],[-.5,.5-bevel]];
+  const at=(base,w,h,k)=>[base[0]+S[0]*P[k][0]*w+T[0]*P[k][1]*h,
+   base[1]+S[1]*P[k][0]*w+T[1]*P[k][1]*h,base[2]+S[2]*P[k][0]*w+T[2]*P[k][1]*h];
+  for(let i=0;i<8;i++) {
+   const j=(i+1)%8,ex=P[j][0]-P[i][0],ey=P[j][1]-P[i][1];
+   const w=(w0+w1)*.5,h=(h0+h1)*.5;
+   const n2=norm([ey*h,-ex*w,0]);
+   const n3=norm([S[0]*n2[0]+T[0]*n2[1],S[1]*n2[0]+T[1]*n2[1],S[2]*n2[0]+T[2]*n2[1]]);
+   quad(at(a,w0,h0,i),at(a,w0,h0,j),at(b,w1,h1,j),at(b,w1,h1,i),n3,mat,part);
+  }
+  if(caps) {
+   const back=[-D[0],-D[1],-D[2]];
+   for(let i=0;i<8;i++) {
+    const j=(i+1)%8;
+    vert(a,back,mat,part);vert(at(a,w0,h0,i),back,mat,part);vert(at(a,w0,h0,j),back,mat,part);
+    vert(b,D,mat,part);vert(at(b,w1,h1,j),D,mat,part);vert(at(b,w1,h1,i),D,mat,part);
+   }
+  }
+ }
+ function ell(c,r,mat,part,lat=6,lon=12) {
+  const ax=[r[0],0,0],ay=[0,r[1],0],az=[0,0,r[2]];
+  axesEll(c,ax,ay,az,mat,part,lat,lon);
+ }
+ function axesEll(c,ax,ay,az,mat,part,lat=6,lon=12) {
+  const a2=[ax[0]*ax[0]+ax[1]*ax[1]+ax[2]*ax[2],ay[0]*ay[0]+ay[1]*ay[1]+ay[2]*ay[2],az[0]*az[0]+az[1]*az[1]+az[2]*az[2]];
+  const at=(u,v)=>{
+   const s=Math.sin(u),co=Math.cos(u),x=s*Math.cos(v),y=co,z=s*Math.sin(v);
+   const p=[c[0]+x*ax[0]+y*ay[0]+z*az[0],c[1]+x*ax[1]+y*ay[1]+z*az[1],c[2]+x*ax[2]+y*ay[2]+z*az[2]];
+   const n=norm([ax[0]*x/a2[0]+ay[0]*y/a2[1]+az[0]*z/a2[2],
+    ax[1]*x/a2[0]+ay[1]*y/a2[1]+az[1]*z/a2[2],
+    ax[2]*x/a2[0]+ay[2]*y/a2[1]+az[2]*z/a2[2]]);
+   return [p,n];
+  };
+  for(let row=0;row<lat;row++) for(let col=0;col<lon;col++) {
+   const a=at(row/lat*Math.PI,col/lon*TAU),b=at(row/lat*Math.PI,(col+1)/lon*TAU);
+   const c2=at((row+1)/lat*Math.PI,(col+1)/lon*TAU),d=at((row+1)/lat*Math.PI,col/lon*TAU);
+   if(row>0) {vert(a[0],a[1],mat,part);vert(b[0],b[1],mat,part);vert(d[0],d[1],mat,part);}
+   if(row<lat-1) {vert(b[0],b[1],mat,part);vert(c2[0],c2[1],mat,part);vert(d[0],d[1],mat,part);}
+  }
+ }
+ function rail(z0,z1,y,halfW,mat,part=MAIN) {
+  prism([0,y,z0],[0,y,z1],halfW*2,.020,halfW*2,.020,mat,part,.16);
+  for(let z=z0+.014;z<z1-.008;z+=.026) box(-halfW*.72,y+.008,z,halfW*1.44,.008,.008,mat,part);
+ }
+ function guard() {
+  tube([-.004,-.042,.096],[-.004,-.098,.118],.0065,.0065,METAL,MAIN,6,false);
+  tube([-.004,-.098,.118],[-.004,-.102,.168],.0065,.0065,METAL,MAIN,6,false);
+  tube([-.004,-.102,.168],[-.004,-.032,.178],.0065,.0065,METAL,MAIN,6,false);
+  box(-.009,-.088,.142,.014,.043,.013,METAL,ACTION);
+ }
+ if(pistol) {
+  prism([0,.046,.034],[0,.046,.314],.084,.058,.077,.050,METAL,ACTION,.16);
+  prism([0,-.009,.034],[0,-.009,.254],.077,.052,.067,.045,BODY,MAIN,.16);
+  box(-.029,-.044,.100,.058,.020,.118,METAL,MAIN);
+  prism([0,-.024,.074],[0,-.152,.006],.073,.064,.061,.056,BODY,MAIN,.14);
+  for(const side of [-1,1]) prism([side*.033,-.052,.060],[side*.030,-.145,-.003],.009,.050,.009,.043,STRAP,MAIN,.10);
+  for(let i=0;i<5;i++) {
+   box(-.041,.058,.202+i*.018,.009,.048,.006,METAL,ACTION);
+   box(.032,.058,.202+i*.018,.009,.048,.006,METAL,ACTION);
+  }
+  box(-.006,.072,.286,.012,.020,.013,METAL,ACTION);
+  box(-.025,.072,.052,.050,.015,.011,METAL,ACTION);
+  box(-.009,.080,.052,.018,.011,.009,ACCENT,ACTION);
+  tube([0,.046,.300],[0,.046,front],.020,.018,METAL,MAIN,12);
+  tube([0,.046,front-.018],[0,.046,front+.010],.025,.024,METAL,MAIN,10);
+  box(-.008,.076,front-.052,.016,.010,.018,ACCENT,MAIN);
+  guard();
+  prism([0,-.151,.012],[0,-.169,.001],.058,.030,.052,.026,POLY,MAG,.12);
+  box(-.027,-.178,.000,.054,.014,.030,STRAP,MAG);
+  prism([0,-.150,.028],[0,-.162,.012],.014,.012,.012,.010,ACCENT,MAG,.08);
+ } else {
+  prism([0,.008,-.100],[0,-.003,-.286],.072,.096,.056,.084,BODY,MAIN,.18);
+  prism([0,-.002,-.286],[0,-.002,-.336],.060,.090,.052,.080,POLY,MAIN,.15);
+  prism([0,.064,-.302],[0,.061,-.150],.056,.030,.051,.028,BODY,MAIN,.10);
+  box(-.031,-.050,-.342,.062,.055,.022,STRAP,MAIN);
+  prism([0,-.004,.020],[0,-.004,.300],.099,.088,.092,.080,BODY,MAIN,.14);
+  prism([0,.050,.000],[0,.050,.282],.089,.056,.082,.050,METAL,MAIN,.16);
+  box(.027,.056,.126,.021,.027,.092,POLY,MAIN);
+  box(.045,.060,.118,.020,.014,.058,METAL,ACTION);
+  prism([0,-.020,.074],[0,-.152,.000],.067,.068,.058,.058,BODY,MAIN,.14);
+  for(let i=0;i<4;i++) box(-.039,-.140-i*.004,.018,.078,.004,.062,STRAP,MAIN);
+  guard();
+  rail(.036,coreEnd-.030,.080,.029,METAL,MAIN);
+ }
+ if(!pistol) {
+  if(shotgun) {
+   tube([0,-.002,.410],[0,-.002,.845],.026,.024,METAL,MAIN,10);
+   tube([0,.060,.405],[0,.060,front],.026,.024,METAL,MAIN,10);
+   tube([0,.060,.430],[0,.060,.690],.036,.034,METAL,MAIN,12);
+   prism([0,.010,.405],[0,.010,.620],.092,.086,.088,.080,POLY,ACTION,.18);
+   for(let i=0;i<5;i++) box(-.046,.004,.432+i*.036,.092,.030,.013,STRAP,ACTION);
+   for(const side of [-1,1]) tube([side*.040,.040,.650],[side*.040,.040,.790],.008,.008,ACCENT,MAIN,6,false);
+   for(let i=0;i<3;i++) {
+    tube([-.052,-.018-i*.030,.150],[-.052,-.018-i*.030,.235],.012,.012,ACCENT,MAIN,6);
+    tube([-.052,-.026-i*.030,.150],[-.052,-.026-i*.030,.235],.010,.010,METAL,MAIN,6);
+   }
+   box(-.008,.086,front-.060,.016,.020,.016,ACCENT,MAIN);
+   prism([0,.064,.300],[0,.058,.400],.050,.028,.045,.026,PAD,MAIN,.12);
+  } else {
+   const guardEnd=smg?.420:.620;
+   prism([0,.010,.282],[0,.010,guardEnd],.086,.090,.079,.080,BODY,MAIN,.20);
+   for(const side of [-1,1]) for(let i=0;i<4;i++) box(side*.044,.002,.320+i*.060,.008,.044,.026,POLY,MAIN);
+   for(let i=0;i<3;i++) box(-.044,.058,.330+i*.090,.088,.010,.012,METAL,MAIN);
+   tube([0,.060,.330],[0,.060,front-.062],.019,.017,METAL,MAIN,10);
+   tube([0,.060,.350],[0,.060,front-.090],.030,.028,METAL,MAIN,10);
+   tube([0,.060,front-.075],[0,.060,front+.008],.028,.025,METAL,MAIN,10);
+   for(let i=0;i<4;i++) {
+    const a=i*TAU/4;
+    box(Math.cos(a)*.031-.004,.060+Math.sin(a)*.031-.004,front-.040,.008,.008,.026,POLY,MAIN);
+   }
+   box(-.008,.086,front-.092,.016,.026,.014,ACCENT,MAIN);
+   if(smg) {
+    prism([0,-.060,.335],[0,-.168,.300],.046,.052,.040,.046,POLY,MAIN,.16);
+    box(-.026,-.186,.292,.052,.018,.036,STRAP,MAIN);
+    rail(.120,.270,.082,.027,METAL,MAIN);
+    box(-.024,.094,.150,.048,.028,.060,BODY,MAIN);
+    box(-.018,.106,.155,.036,.012,.050,OPTIC,MAIN);
+   }
+   if(dmr) {
+    box(-.034,.092,.130,.068,.052,.050,METAL,MAIN);
+    box(-.034,.092,.322,.068,.052,.050,METAL,MAIN);
+    tube([0,.148,.105],[0,.148,.415],.033,.036,BODY,MAIN,12);
+    tube([0,.148,.080],[0,.148,.142],.039,.039,METAL,MAIN,12);
+    tube([0,.148,.378],[0,.148,.432],.043,.043,METAL,MAIN,12);
+    tube([0,.148,.074],[0,.148,.079],.026,.026,OPTIC,MAIN,10);
+    const r=norm([0,0,-1]);
+    for(let i=0;i<10;i++) {
+     const a=i*TAU/10,n=(i+1)*TAU/10,rr=i%2?.012:.032;
+     vert([0,.148,.071],r,OPTIC,MAIN);vert([Math.cos(a)*rr,.148+Math.sin(a)*rr,.071],r,OPTIC,MAIN);
+     vert([Math.cos(n)*(i%2?.032:.012),.148+Math.sin(n)*(i%2?.032:.012),.071],r,OPTIC,MAIN);
+    }
+    prism([0,-.060,.640],[0,-.100,.815],.032,.040,.028,.032,POLY,MAIN,.15);
+    for(const side of [-1,1]) tube([side*.020,-.030,.500],[side*.055,-.160,.620],.008,.008,METAL,MAIN,6);
+   }
+  }
+ }
+ const magLen=(smg?.195:dmr?.120:.180)+(up.capacity>=2?.046:0);
+ if(!pistol&&!shotgun) {
+  const top=.206,mid=-.050-magLen*.55,base=-.050-magLen;
+  prism([0,-.050,top],[0,mid,top-.012],.072,.090,.067,.088,BODY,MAG,.14);
+  prism([0,mid,top-.012],[0,base,top-.032],.066,.086,.060,.080,BODY,MAG,.14);
+  prism([0,base-.006,top-.036],[0,base-.028,top-.042],.074,.030,.068,.026,POLY,MAG,.12);
+  for(let i=0;i<3;i++) box(-.036,mid+ .014-i*.026,top-.030,.072,.010,.014,STRAP,MAG);
+  if(up.capacity>=2) box(-.030,base-.050,top-.040,.060,.022,.026,ACCENT,MAG);
+ }
+ if(up.control>=1&&!pistol) {
+  const gz=shotgun?.560:smg?.360:.405;
+  prism([0,-.052,gz],[0,-.132,gz-.030],.046,.050,.040,.044,POLY,MAIN,.16);
+  box(-.026,-.148,gz-.052,.052,.016,.034,STRAP,MAIN);
+ }
+ if(up.control>=2&&!pistol&&!dmr) {
+  box(-.032,.090,.120,.064,.022,.062,METAL,MAIN);
+  box(-.028,.112,.136,.056,.041,.044,BODY,MAIN);
+  box(-.014,.128,.132,.028,.018,.008,OPTIC,MAIN);
+ }
+ if(up.damage>=2) {
+  tube([0,.060,front-.080],[0,.060,front+.012],.034,.030,METAL,MAIN,10);
+  for(let i=0;i<3;i++) box(-.030,.052+i*.010,front-.030,.060,.006,.020,POLY,MAIN);
+ }
+ if(up.reload>=2&&!pistol) box(-.062,-.020,.150,.018,.042,.086,ACCENT,MAIN);
+ if(up.reload>=2&&pistol) box(.038,-.060,.120,.014,.034,.052,ACCENT,MAIN);
+
+ /* 右臂与握持手 */
+ const gripY=pistol?-.100:-.104;
+ tube([.440,-.545,-.360],[.252,-.325,-.098],.086,.062,SLEEVE,MAIN,10);
+ tube([.252,-.325,-.098],[.158,-.238,-.024],.062,.052,SLEEVE,MAIN,10);
+ ell([.236,-.308,-.072],.055,.050,.060,PAD,MAIN);
+ tube([.158,-.238,-.024],[.126,-.190,.012],.052,.046,STRAP,MAIN,10);
+ tube([.108,-.164,.000],[.134,-.202,.012],.048,.044,GLOVE,MAIN,8);
+ ell([.072,-.118,.045],.036,.058,.032,GLOVE,MAIN);
+ ell([.090,-.102,.024],.018,.030,.016,PAD,MAIN);
+ for(let i=0;i<4;i++) {
+  const y=gripY+.024-i*.019,z0=.050;
+  tube([.100,y,z0],[.056,y-.004,z0+.037],.0105,.0098,GLOVE,MAIN,6,false);
+  tube([.056,y-.004,z0+.037],[.008,y-.002,z0+.024],.0098,.0082,GLOVE,MAIN,6,false);
+ }
+ tube([.076,-.062,.032],[.020,-.043,.058],.012,.010,GLOVE,MAIN,6,false);
+ tube([.132,-.196,.010],[.140,-.184,.020],.050,.044,STRAP,MAIN,8);
+
+ /* 左支撑手与前臂 */
+ if(pistol) {
+  ell([-.046,-.152,.072],.034,.054,.032,GLOVE,SUPPORT);
+  for(let i=0;i<4;i++) {
+   const y=-.108-i*.017,z0=.068;
+   tube([-.078,y,z0],[-.018,y-.004,z0+.028],.0105,.0096,GLOVE,SUPPORT,6,false);
+   tube([-.018,y-.004,z0+.028],[.026,y-.002,z0+.012],.0096,.0082,GLOVE,SUPPORT,6,false);
+  }
+  tube([-.056,-.092,.052],[-.012,-.078,.028],.012,.010,GLOVE,SUPPORT,6,false);
+  tube([-.090,-.208,.000],[-.060,-.164,.048],.045,.040,STRAP,SUPPORT,8);
+  tube([-.290,-.372,-.108],[-.090,-.208,.000],.078,.050,SLEEVE,MAIN,10);
+  tube([-.108,-.216,.000],[-.090,-.208,.000],.050,.046,STRAP,SUPPORT,8);
+ } else {
+  const spz=shotgun?.505:smg?.322:.405;
+  ell([-.070,-.094,spz],.034,.054,.038,GLOVE,SUPPORT);
+  ell([-.078,-.072,spz-.010],.016,.026,.020,PAD,SUPPORT);
+  for(let i=0;i<4;i++) {
+   const zz=spz-.042+i*.024;
+   tube([-.082,-.070,zz],[-.016,-.010,zz],.0105,.0096,GLOVE,SUPPORT,6,false);
+   tube([-.016,-.010,zz],[.036,-.020,zz+.004],.0096,.0082,GLOVE,SUPPORT,6,false);
+  }
+  tube([-.078,-.060,spz-.024],[-.036,-.004,spz-.034],.012,.010,GLOVE,SUPPORT,6,false);
+  tube([-.084,-.158,spz-.076],[-.062,-.112,spz-.030],.045,.040,STRAP,SUPPORT,8);
+  tube([-.286,-.350,spz-.220],[-.084,-.158,spz-.076],.080,.050,SLEEVE,MAIN,10);
+  tube([-.120,-.186,spz-.100],[-.084,-.158,spz-.076],.052,.046,STRAP,SUPPORT,8);
+  ell([-.266,-.326,spz-.190],.050,.046,.056,PAD,MAIN);
+ }
+ /* 枪口焰：星形薄片，随 uFire 渐亮，不做血性或写实效果。 */
+ const flare=[0,.060,front+.032],normal=[0,0,-1];
+ for(let i=0;i<16;i++) {
+  const a=i*TAU/16,b=(i+1)*TAU/16,r=i%2?.022:.082,R=(i+1)%2?.022:.082;
+  vert(flare,normal,FLASH,MAIN);
+  vert([Math.cos(a)*r,.060+Math.sin(a)*r,flare[2]],normal,FLASH,MAIN);
+  vert([Math.cos(b)*R,.060+Math.sin(b)*R,flare[2]],normal,FLASH,MAIN);
+ }
+ return new Float32Array(data);
+}
+
+function makeViewPassV2(gl,program,playerLight) {
+ const shader=program(`
+ attribute vec3 aPoint,aShadeNormal;
+ attribute float aSurface,aPart;
+ uniform vec2 uScale;
+ uniform vec3 uRest;
+ uniform float uSway,uBob,uKick,uLoad,uMag,uSupport,uSlide,uSwitch,uFirePulse,uTime;
+ varying vec3 vLocal,vNormal;
+ varying float vSurface,vPart;
+ void main() {
+  vec3 p=aPoint;
+  if(aPart>.5&&aPart<1.5) {
+   p.x+=uMag*.036;p.y-=uMag*.185;p.z-=uMag*.086;
+  } else if(aPart>1.5&&aPart<2.5) {
+   p.x+=uSupport*.030;p.y-=uSupport*.068;p.z-=uSupport*.090;
+  } else if(aPart>2.5) {
+   p.z-=uSlide*.046;p.y+=uSlide*.004;
+  }
+  float roll=-uLoad*.34+uSway*.30+uSwitch*.23-uFirePulse*.014+sin(uTime*1.1)*.0022;
+  mat2 turn=mat2(cos(roll),sin(roll),-sin(roll),cos(roll));
+  p.xy=turn*p.xy;
+  p.x-=p.z*.165;
+  p.x+=uSway+uSwitch*.032+sin(uTime*.91)*.0014;
+  p.y+=p.z*(.04+uKick*.30)+uBob+uKick*.072-uLoad*.058-uSwitch*.220;
+  p.z-=uKick*.62+uSwitch*.120;
+  p+=uRest;
+  p.z=max(p.z,.12);
+  vec3 n=aShadeNormal;n.xy=turn*n.xy;
+  vLocal=aPoint;vNormal=n;vSurface=aSurface;vPart=aPart;
+  gl_Position=vec4(p.x*uScale.x,p.y*uScale.y,p.z*1.038-.082,p.z);
+ }`, `precision highp float;
+ uniform vec3 uBody,uMetal,uAccent,uEnvironment,uPlayerLight;
+ uniform float uFire;
+ varying vec3 vLocal,vNormal;
+ varying float vSurface,vPart;
+ float h1(vec2 p) {return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
+ void main() {
+  if(vSurface>6.5&&vSurface<7.5) {
+   if(uFire<.01) discard;
+   float r=length(vLocal.xy-vec2(0.,.06));
+   float edge=1.-smoothstep(.010,.090,r);
+   if(edge<.02) discard;
+   vec3 fc=mix(vec3(1.,.97,.80),vec3(1.,.47,.12),smoothstep(.004,.075,r));
+   float fade=smoothstep(0.,.22,uFire);
+   gl_FragColor=vec4(fc*(.55+1.05*uFire)*fade,1.);
+   return;
+  }
+  vec3 c;
+  float matte=.9;
+  if(vSurface<.5) {c=uBody;matte=.82;}
+  else if(vSurface<1.5) {c=uMetal;matte=.34;}
+  else if(vSurface<2.5) {c=vec3(.085,.095,.095);matte=.74;}
+  else if(vSurface<3.5) {c=vec3(.205,.228,.190);matte=1.;}
+  else if(vSurface<4.5) {c=vec3(.132,.148,.132);matte=.58;}
+  else if(vSurface<5.5) {c=uAccent;matte=.42;}
+  else if(vSurface<6.5) {c=vec3(.155,.300,.285);matte=.18;}
+  else if(vSurface<8.5) {c=vec3(.075,.085,.080);matte=.72;}
+  else {c=vec3(.175,.195,.185);matte=.50;}
+  float grain=h1(floor(vLocal.xy*820.)+floor(vLocal.zx*640.));
+  float weave=sin(vLocal.x*250.+vLocal.y*30.)*sin(vLocal.y*310.);
+  if(vSurface>2.5&&vSurface<3.5) c*=.90+.055*weave+.080*grain;
+  if(vSurface>3.5&&vSurface<4.5) c*=.88+.10*grain+.03*sin(vLocal.x*180.);
+  if(vSurface>7.5) c*=.92+.06*sin(vLocal.y*220.)+.05*grain;
+  if(vSurface<.5) c*=.95+.05*grain;
+  if(vSurface>5.5&&vSurface<6.5) c*=.95+.05*sin(vLocal.z*200.);
+  vec3 n=normalize(vNormal);
+  vec3 key=normalize(vec3(-.30,.78,-.45));
+  vec3 fill=normalize(vec3(.72,.08,-.62));
+  float keyL=max(0.,dot(n,key)),fillL=max(0.,dot(n,fill));
+  float spec=pow(max(0.,dot(n,normalize(key+vec3(0.,0.,-1.)))),mix(14.,46.,1.-matte));
+  vec3 local=uPlayerLight*(.42+.58*max(0.,n.y));
+  vec3 lit=c*(vec3(.34,.37,.38)+uEnvironment*.52+local+keyL*.34+fillL*.13);
+  lit+=spec*(1.-matte)*vec3(.62,.68,.70);
+  if(vSurface<1.5) lit+=pow(fillL,15.)*vec3(.12,.14,.15);
+  if(vSurface>5.5&&vSurface<6.5) lit+=pow(fillL,10.)*vec3(.03,.12,.12);
+  lit+=uFire*vec3(.22,.10,.045)*(.38+keyL*.55);
+  gl_FragColor=vec4(lit,1.);
+ }`);
+ const p=shader.p;
+ const attributes=['aPoint','aShadeNormal','aSurface','aPart'].map(name=>gl.getAttribLocation(p,name));
+ const u=Object.fromEntries(['uScale','uRest','uSway','uBob','uKick','uLoad','uMag','uSupport','uSlide','uSwitch','uFirePulse','uTime','uBody','uMetal','uAccent','uEnvironment','uPlayerLight','uFire'].map(name=>[name,gl.getUniformLocation(p,name)]));
+ const buffers=new Map(),rgb=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255);
+ const SWITCH=.34;
+ let lastNow=performance.now()/1000,lastKind=null,lastMuzzle=0,switchT=0,firePulse=0;
+ let moveBlend=0,runBlend=0,aimBlend=0;
+ function windowed(v,a,b,c,d) {
+  if(v<=a||v>=d) return 0;
+  if(v<b) {const t=(v-a)/(b-a);return t*t*(3-2*t);}
+  if(v<=c) return 1;
+  const t=(v-c)/(d-c);return 1-t*t*(3-2*t);
+ }
+ return function drawWeapon(item) {
+  const now=performance.now()/1000,dt=Math.min(.05,Math.max(0,now-lastNow));
+  lastNow=now;
+  const up=upgradesOf(item.id),key=[up.capacity>=2,up.control>=1,up.control>=2,up.damage>=2,up.reload>=2].join();
+  const skin=skinOf(item.id);
+  let mesh=buffers.get(item.kind);
+  if(!mesh) {mesh={buffer:gl.createBuffer()};buffers.set(item.kind,mesh);}
+  gl.bindBuffer(gl.ARRAY_BUFFER,mesh.buffer);
+  if(mesh.key!==key) {
+   let data;
+   try {data=makeViewMeshV2(item.kind,up);}
+   catch(error) {console.warn('Layered viewmodel mesh failed:',error.message);data=makeViewMeshLegacy(item.kind,up);}
+   gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);mesh.key=key;mesh.count=data.length/8;
+  }
+  const justSwitched=lastKind!==null&&lastKind!==item.kind;
+  if(justSwitched) switchT=SWITCH;
+  lastKind=item.kind;
+  if(!justSwitched) switchT=Math.max(0,switchT-dt);
+  const swap=justSwitched?1:switchT/SWITCH,swapE=swap*swap;
+  if(muzzle>lastMuzzle+.003) firePulse=1;
+  lastMuzzle=muzzle;
+  firePulse=Math.max(0,firePulse-dt*13);
+  const moving=keys.has('KeyW')||keys.has('KeyA')||keys.has('KeyS')||keys.has('KeyD')||Math.hypot(joyX,joyY)>.08;
+  const running=moving&&(keys.has('ShiftLeft')||keys.has('ShiftRight'));
+  moveBlend+=(Number(moving)-moveBlend)*Math.min(1,dt*8);
+  runBlend+=(Number(running)-runBlend)*Math.min(1,dt*7);
+  aimBlend+=(Number(aiming)-aimBlend)*Math.min(1,dt*12);
+  const stability=1-aimBlend*.58;
+  const breathe=Math.sin(now*1.24)*.62+Math.sin(now*.41+1.8)*.38;
+  const idle=1-moveBlend*.72;
+  const sway=(Math.sin(step*.5)*.014*moveBlend+Math.sin(now*.58)*.0034*idle+Math.sin(step)*.006*runBlend)*stability;
+  const bob=(Math.cos(step*2)*.012*moveBlend+breathe*.0034*idle+Math.sin(step*2)*.008*runBlend)*stability;
+  const loadProgress=reloadTime>0?clamp(1-reloadTime/item.reload,0,1):0;
+  const load=reloadTime>0?Math.sin(Math.PI*loadProgress):0;
+  const magDrop=reloadTime>0?windowed(loadProgress,.04,.16,.56,.72):0;
+  const support=Math.min(1,(reloadTime>0?windowed(loadProgress,.02,.12,.62,.80):0)+(item.kind==='shotgun'?firePulse*.26:0));
+  const slide=item.kind==='pistol'?firePulse:item.kind==='shotgun'?Math.max(firePulse*.58,support*.75):item.kind==='dmr'?firePulse*.52:firePulse*.42;
+  gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.useProgram(shader.p);
+  gl.uniform2f(u.uScale,focal*2/W.width,focal*2/W.height);
+  const baseY=Math.min(-.205,-.205*(W.height/W.width)/.625);
+  gl.uniform3f(u.uRest,.196,baseY-.020+.014*aimBlend,.62-.012*aimBlend);
+  gl.uniform1f(u.uSway,sway);
+  gl.uniform1f(u.uBob,bob);
+  gl.uniform1f(u.uKick,recoil);
+  gl.uniform1f(u.uLoad,load);
+  gl.uniform1f(u.uMag,magDrop);
+  gl.uniform1f(u.uSupport,support);
+  gl.uniform1f(u.uSlide,slide);
+  gl.uniform1f(u.uSwitch,swapE);
+  gl.uniform1f(u.uFirePulse,firePulse);
+  gl.uniform1f(u.uTime,now);
+  gl.uniform3fv(u.uBody,rgb(skin.body));gl.uniform3fv(u.uMetal,rgb(skin.metal));gl.uniform3fv(u.uAccent,rgb(skin.accent));
+  gl.uniform3fv(u.uEnvironment,MAP.theme.ambient);gl.uniform3fv(u.uPlayerLight,playerLight);
+  gl.uniform1f(u.uFire,Math.min(1,muzzle/.057));
   for(const [i,n,pos] of [[0,3,0],[1,3,12],[2,1,24],[3,1,28]]) {
    gl.enableVertexAttribArray(attributes[i]);gl.vertexAttribPointer(attributes[i],n,gl.FLOAT,false,32,pos);
   }
@@ -1152,7 +1574,10 @@ function makeYardRenderer() {
   gl.uniform3fv(u.uFog,MAP.theme.fog);gl.uniform3fv(u.uAmbient,MAP.theme.ambient);
  }
  let viewPass=null;
- try {viewPass=makeViewPass(gl,program,playerLight);} catch(error) {console.warn('Player viewmodel unavailable:',error.message);}
+ try {viewPass=makeViewPassV2(gl,program,playerLight);}
+ catch(error) {console.warn('Player viewmodel V2 unavailable:',error.message);
+  try {viewPass=makeViewPassLegacy(gl,program,playerLight);} catch(error) {console.warn('Player viewmodel unavailable:',error.message);}
+ }
  function draw(view,dx,dy,look,drawables) {
   prepareLights(view);
   if(canvas.width!==W.width||canvas.height!==W.height) {canvas.width=W.width;canvas.height=W.height;}
@@ -1199,7 +1624,7 @@ const splashRings=Array.from({length:22},()=>[splashRandom(),splashRandom(),spla
 const cloudRandom=rng(621);
 const cloudBanks=Array.from({length:14},()=>[cloudRandom(),cloudRandom(),cloudRandom()]);
 function yardActors(demo) {
- const out=(demo?previewEnemies:enemies).map(z=>{
+ const out=(demo?[]:enemies).map(z=>{
   const advance=demo?frames*.023:0;
   if(yard3D.hasModels()) return {x:z.x,y:z.y,actor:z,advance};
   const {canvas}=zombieFrame(z,advance);
@@ -1484,7 +1909,7 @@ function paintLegacy() {
    ctx.fillStyle='rgba(255,169,79,.12)';ctx.fillRect(sx,lampY+lampHeight,stride,Math.max(3,90/d));
   }
  }
- const drawables=(demo?previewEnemies:enemies).map(z=>{
+ const drawables=(demo?[]:enemies).map(z=>{
   const {canvas}=zombieFrame(z,demo?frames*.018:0);
   return {x:z.x,y:z.y,height:types[z.type].height,img:canvas};
  });

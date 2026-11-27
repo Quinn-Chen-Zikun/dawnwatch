@@ -3,48 +3,68 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#131613">
+<meta name="theme-color" content="#0a1112">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<title>破晓守望 · 剧情战役 / 五大战区</title>
+<title>破晓守望 · 北岭封锁区</title>
 <meta name="description" content="破晓守望：枪战与剧情双模式。剧情模式跟随三人小队穿越货运港、地铁站、地下隧道、医院与监狱五个战区，击倒感染者与首领。">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="css/game.css?v=20261127f">
+<link rel="stylesheet" href="css/game.css?v=20261127g">
 </head>
 <body>
 <canvas id="world" aria-label="第一人称战场"></canvas><div id="shade"></div><div id="effects"></div><div id="scope" aria-hidden="true"></div>
 <section class="screen" id="menu">
-  <header class="header"><div class="brand"><i aria-hidden="true">ϟ</i> DAWNWATCH</div><div class="headerRight"><span class="wallet mono" id="menuCredits">₡ 0</span><span class="buildTag">V3.1 · 11-27</span><div class="status">封锁中</div></div></header>
-  <div class="hero">
-    <div class="label" id="menuKicker">单人生存 / ZOMBIE SURVIVAL</div>
-    <h1>破晓守望</h1><div class="en">DAWNWATCH</div>
-    <p id="menuBlurb">雨夜货运港已失守。穿过集装箱区、维修站和装卸场，守住八波感染者。</p>
-    <div class="actions"><button class="primary" id="start">进入隔离区 <span aria-hidden="true">↗</span></button><button class="subtle" id="openArmory">军械库</button><button class="subtle" id="openSettings">设置</button><button class="subtle" id="mute">声音 开</button><button class="subtle" id="openGuide">感染者图鉴</button></div>
-    <div class="playModes" role="group" aria-label="玩法">
-      <button type="button" class="playMode active" id="styleSurvival" data-style="survival">枪战模式<small>SURVIVAL · 选战区守波次</small></button>
-      <button type="button" class="playMode" id="styleStory" data-style="story">剧情模式<small>CAMPAIGN · 三人小队穿越五区</small></button>
+  <header class="header">
+    <div class="brand">
+      <svg class="brandMark" viewBox="0 0 28 28" aria-hidden="true" focusable="false"><path d="M3.5 24.5h21M6.5 24.5V11L14 4.5l7.5 6.5v13M10.5 24.5v-8h7v8M14 4.5v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="square"/></svg>
+      <span class="brandName">北岭封锁区</span>
+      <span class="brandSub">夜间行动</span>
     </div>
-    <div id="survivalOptions">
-      <div class="mapSelect" id="mapSelect" role="group" aria-label="选择战区">
-        <button type="button" class="mapChoice active" data-map="yard" aria-pressed="true"><small>07</small><b>货运港</b></button>
-        <button type="button" class="mapChoice" data-map="subway" aria-pressed="false"><small>11</small><b>地铁站</b></button>
-        <button type="button" class="mapChoice" data-map="tunnel" aria-pressed="false"><small>03</small><b>隧道</b></button>
-        <button type="button" class="mapChoice" data-map="hospital" aria-pressed="false"><small>22</small><b>医院</b></button>
-        <button type="button" class="mapChoice" data-map="prison" aria-pressed="false"><small>18</small><b>监狱</b></button>
+    <div class="headerRight">
+      <span class="wallet mono" id="menuCredits">₡ 0</span>
+      <span class="status">全线封锁</span>
+    </div>
+  </header>
+  <div class="menuMain">
+    <div class="hero">
+      <div class="kicker" id="menuKicker">单人生存 / ZOMBIE SURVIVAL</div>
+      <h1 class="gameTitle">破晓守望</h1>
+      <p class="blurb" id="menuBlurb">雨夜货运港已失守。穿过集装箱区、维修站和装卸场，守住八波感染者。</p>
+      <div class="launch"><button class="primary startBtn" id="start">进入隔离区 <span aria-hidden="true">↗</span></button></div>
+      <div class="playModes" role="group" aria-label="玩法">
+        <button type="button" class="playMode active" id="styleSurvival" data-style="survival" aria-pressed="true"><b>生存</b><small>守住感染波次</small></button>
+        <button type="button" class="playMode" id="styleStory" data-style="story" aria-pressed="false"><b>剧情</b><small>三人小队 · 五章</small></button>
       </div>
-      <div class="modeRow" role="group" aria-label="游戏模式">
-        <button type="button" class="modeChoice active" id="modeStandard" aria-pressed="true">标准 8 波</button>
-        <button type="button" class="modeChoice" id="modeEndless" aria-pressed="false">无尽生存</button>
+      <div id="survivalOptions" class="choiceBlock">
+        <div class="choiceCaption"><span>行动区域</span></div>
+        <div class="mapSelect" id="mapSelect" role="group" aria-label="选择战区">
+          <button type="button" class="mapChoice active" data-map="yard" aria-pressed="true"><b>货运港</b></button>
+          <button type="button" class="mapChoice" data-map="subway" aria-pressed="false"><b>地铁站</b></button>
+          <button type="button" class="mapChoice" data-map="tunnel" aria-pressed="false"><b>隧道</b></button>
+          <button type="button" class="mapChoice" data-map="hospital" aria-pressed="false"><b>医院</b></button>
+          <button type="button" class="mapChoice" data-map="prison" aria-pressed="false"><b>监狱</b></button>
+        </div>
+        <div class="modeRow" role="group" aria-label="游戏模式"><span class="modeLabel">强度</span>
+          <button type="button" class="modeChoice active" id="modeStandard" aria-pressed="true">标准 8 波</button>
+          <button type="button" class="modeChoice" id="modeEndless" aria-pressed="false">无尽生存</button>
+        </div>
       </div>
+      <div class="storyPanel" id="storyOptions" hidden>
+        <p class="storyBrief" id="storyBrief">破晓前最后三小时。带着老秦、林夏和小七穿过封锁区，把感染样本送到北岭大桥的撤离车队。五个战区，十五个阶段，一名叛变的主治医师，和一位不肯开门的典狱长。</p>
+        <div class="choiceCaption"><span>行动章节</span></div>
+        <div class="chapterList" id="chapterList" role="group" aria-label="选择章节"></div>
+      </div>
+      <div class="utilityBar">
+        <button type="button" class="utility" id="openArmory">军械库</button>
+        <button type="button" class="utility" id="openGuide">感染者图鉴</button>
+        <button type="button" class="utility" id="openSettings">设置</button>
+        <button type="button" class="utility" id="mute" aria-pressed="true">声音 开</button>
+      </div>
+      <div class="instructions" id="desktopHelp"><span><b class="key">WASD</b>移动</span><span><b class="key">左键</b>射击</span><span><b class="key">右键</b>机瞄</span><span><b class="key">R</b>换弹</span><span><b class="key">1–5 / Q</b>切枪</span><span><b class="key">F</b>近战</span><span><b class="key">G</b>投雷</span><span><b class="key">E</b>补给</span><span><b class="key">M</b>地图</span></div>
+      <div class="instructions" id="touchHelp" hidden>左摇杆移动 · 滑动瞄准 · 右侧开火 · 右上角地图</div>
     </div>
-    <div class="storyPanel" id="storyOptions" hidden>
-      <p class="storyBrief" id="storyBrief">破晓前最后三小时。带着老秦、林夏和小七穿过封锁区，把感染样本送到北岭大桥的撤离车队。五个战区，十五个阶段，一名叛变的主治医师，和一位不肯开门的典狱长。</p>
-      <div class="chapterList" id="chapterList" role="group" aria-label="选择章节"></div>
-    </div>
-    <div class="instructions" id="desktopHelp"><span><b class="key">WASD</b>移动</span><span><b class="key">鼠标</b>瞄准 / 射击</span><span><b class="key">右键</b>机瞄</span><span><b class="key">R</b>换弹</span><span><b class="key">1–5 / Q</b>切枪</span><span><b class="key">F</b>近战</span><span><b class="key">G</b>投雷</span><span><b class="key">E</b>补给</span><span><b class="key">M</b>地图</span></div>
-    <div class="instructions" id="touchHelp" hidden>左摇杆移动 · 滑动战场瞄准 · 右侧按钮射击 · 右上角打开地图</div>
+    <div class="mapTag" aria-hidden="true"><small class="mono" id="sectorTag">SECTOR 07 / 63 × 63</small><b id="sectorName">雨夜货运港</b></div>
   </div>
-  <div class="mapTag"><small class="mono" id="sectorTag">SECTOR 07 / 43 × 43</small><b id="sectorName">雨夜货运港</b></div>
-  <footer class="menuFoot"><span id="footSector">SECTOR 07 / 雨夜货运港</span><span id="best"></span></footer>
+  <footer class="menuFoot"><span id="footSector">SECTOR 07 / 雨夜货运港</span><span class="footMeta"><span id="best"></span><span class="buildTag">V3.2 · 11-27</span></span></footer>
 </section>
 <div id="hud" hidden aria-label="战斗状态">
   <div id="storyHud" hidden aria-hidden="true"><span class="chapterTag" id="storyChapter"></span><div id="storyObjective"></div><div id="storySquad"></div></div>
@@ -84,22 +104,22 @@
  </div>
 </dialog>
 <dialog class="guide armory" id="armory" aria-labelledby="armoryTitle">
- <header><h2 id="armoryTitle">军械库 / ARMORY</h2><span class="label" id="armoryCredits">₡ 0</span><button class="subtle" id="closeArmory">关闭</button></header>
+ <header><h2 id="armoryTitle">军械库</h2><span class="label" id="armoryCredits">₡ 0</span><button class="subtle" id="closeArmory">关闭</button></header>
  <div class="weaponTabs" id="weaponTabs" role="tablist" aria-label="武器"></div>
  <div class="weaponDetail" id="weaponDetail"></div>
  <p class="armoryHint">击杀、爆头和通过波次获得军费。购买的武器、配件和涂装会永久保存。数字键 1–5 或 Q 在局内切换已拥有的武器。</p>
 </dialog>
 <dialog class="guide settings" id="settings" aria-labelledby="settingsTitle">
- <header><h2 id="settingsTitle">设置 / OPTIONS</h2><button class="subtle" id="closeSettings">关闭</button></header>
+ <header><h2 id="settingsTitle">设置</h2><button class="subtle" id="closeSettings">关闭</button></header>
  <div class="settingRow"><label for="sens">鼠标灵敏度</label><output id="sensVal">1.00</output><input id="sens" type="range" min="0.5" max="2" step="0.05" value="1"></div>
  <div class="settingRow"><label for="fov">视野</label><output id="fovVal">1.00×</output><input id="fov" type="range" min="0.85" max="1.15" step="0.01" value="1"></div>
  <div class="settingRow"><label for="vol">音量</label><output id="volVal">80%</output><input id="vol" type="range" min="0" max="1" step="0.05" value="0.8"></div>
  <div class="settingRow"><label for="fxToggle">动态特效</label><output id="fxVal">开</output><input id="fxToggle" type="checkbox" checked></div>
  <p class="armoryHint">设置会保存在浏览器中。降低视野或关闭动态特效可提升低配设备的帧率。</p>
 </dialog>
-<script src="js/core.js?v=20261127f"></script>
-<script src="js/data.js?v=20261127f"></script>
-<script src="js/game.js?v=20261127f"></script>
-<script src="js/render.js?v=20261127f"></script>
-<script src="js/main.js?v=20261127f"></script>
+<script src="js/core.js?v=20261127g"></script>
+<script src="js/data.js?v=20261127g"></script>
+<script src="js/game.js?v=20261127g"></script>
+<script src="js/render.js?v=20261127g"></script>
+<script src="js/main.js?v=20261127g"></script>
 </body></html>
