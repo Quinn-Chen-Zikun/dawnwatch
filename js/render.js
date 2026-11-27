@@ -1653,7 +1653,10 @@ function yardActors(demo) {
  });
  if(!demo) {
   for(const z of corpses) out.push({x:z.x,y:z.y,actor:z,advance:0});
-  for(const n of npcs) out.push({x:n.x,y:n.y,actor:n,advance:0});
+  // A companion standing inside the first-person camera must not fill the screen.
+  // Player movement is always free; the mesh reappears as soon as they walk past.
+  for(const n of npcs) if(Math.hypot(n.x-player.x,n.y-player.y)>.72)
+   out.push({x:n.x,y:n.y,actor:n,advance:0});
  }
  for(let i=0;i<supplies.length;i++) {
   const [x,y]=supplies[i];

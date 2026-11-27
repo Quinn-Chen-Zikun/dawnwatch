@@ -470,15 +470,18 @@ function updateDialogue(dt) {
  if(dialogueCurrent.t<=0) nextDialogue();
 }
 function spawnSquad() {
- npcs=STORY_SQUAD.map((squad,index)=>{
-  const angle=player.angle+Math.PI+(index-1)*.62,reach=1.35+index*.32;
-  let x=player.x+Math.cos(angle)*reach,y=player.y+Math.sin(angle)*reach;
-  if(!fits(x,y,.22)) {x=player.x;y=player.y;}
-  return {friendly:true,type:'walker',kind:{height:squad.height},squad,
-   x,y,yaw:player.angle,anim:Math.random()*6,flash:0,
+ story.squadTrail={x:player.x,y:player.y,angle:player.angle,revision:0};
+ npcs=[];
+ for(const [index,squad] of STORY_SQUAD.entries()) {
+  const n={friendly:true,type:'walker',kind:{height:squad.height},squad,
+   x:player.x,y:player.y,yaw:player.angle,anim:Math.random()*6,flash:0,
    hp:120,maxHp:120,downed:false,downT:0,downDir:0,revive:0,
-   fireCd:.7+Math.random()*.9,hurtCd:0,barkCd:16+Math.random()*10,muzzle:0,sideBias:index===2?1:index===1?-1:1};
- });
+   fireCd:.7+Math.random()*.9,hurtCd:0,barkCd:16+Math.random()*10,muzzle:0,
+   sideBias:index===1?-1:1,formationRevision:-1};
+  const point=npcAnchor(n,story.squadTrail,true);
+  if(point) {n.x=point.x;n.y=point.y;n.anchor=point;n.formationRevision=0;}
+  npcs.push(n);
+ }
 }
 function storyEnemyType(chapter) {
  const pools=[
@@ -641,42 +644,109 @@ function nextStepToward(sx,sy,tx,ty) {
  while(prev[at]!==start&&at!==start) at=prev[at];
  return at===start?{x:tx,y:ty}:{x:(at%cols)+.5,y:Math.floor(at/cols)+.5};
 }
-function npcStep(n,tx,ty,speed,dt) {
- const dx=tx-n.x,dy=ty-n.y,distance=Math.hypot(dx,dy);
- if(distance<.08) return;
- if(walkableLine(n.x,n.y,tx,ty,.21)&&Math.abs(floorAt(tx,ty)-floorAt(n.x,n.y))<=.62) {
-  const step=Math.min(distance,speed*dt);
-  move(n,dx/distance*step,dy/distance*step,.21);
-  n.anim+=dt*speed*3.2;
-  return;
+// Companion navigation uses stable world-space slots; camera movement is not player movement.
+function squadTrail() {
+ const t=story.squadTrail||(story.squadTrail={x:player.x,y:player.y,angle:player.angle,revision:0});
+ const dx=player.x-t.x,dy=player.y-t.y;
+ if(Math.hypot(dx,dy)>=.85) {
+  t.angle=Math.atan2(dy,dx);t.x=player.x;t.y=player.y;t.revision++;
  }
- n.pathTimer=(n.pathTimer??0)-dt;
- if(n.pathTimer<=0||!n.pathPoint||Math.hypot(n.pathPoint.x-tx,n.pathPoint.y-ty)>2.2) {
-  n.pathPoint=nextStepToward(n.x,n.y,tx,ty);
-  n.pathTimer=.5+Math.random()*.3;
- }
- if(!n.pathPoint) return;
- const px=n.pathPoint.x-n.x,py=n.pathPoint.y-n.y,pd=Math.hypot(px,py)||1;
- const step=Math.min(pd,speed*dt);
- move(n,px/pd*step,py/pd*step,.21);
- n.anim+=dt*speed*3.2;
+ return t;
 }
-function npcAnchor(n) {
- const role=n.squad.id,p=player,objective=story&&story.objective;
- const base=role==='lin'?p.angle+Math.PI*.85:(objective?Math.atan2(objective.y-p.y,objective.x-p.x):p.angle);
- const cfg=role==='qin'?{dist:5.6,side:0}:role==='lin'?{dist:4.4,side:-1.4}:{dist:9.2,side:1.6};
- for(let attempt=0;attempt<12;attempt++) {
-  const angle=base+(Math.random()-.5)*.85;
-  const distance=cfg.dist*(.72+Math.random()*.55),side=cfg.side*(.35+Math.random()*.9);
-  const x=p.x+Math.cos(angle)*distance+Math.cos(angle+Math.PI/2)*side;
-  const y=p.y+Math.sin(angle)*distance+Math.sin(angle+Math.PI/2)*side;
-  if(fits(x,y,.24)&&Math.abs(floorAt(x,y)-floorAt(p.x,p.y))<.62) {
-   const relX=x-p.x,relY=y-p.y,relD=Math.hypot(relX,relY)||1;
-   const dot=(relX*Math.cos(p.angle)+relY*Math.sin(p.angle))/relD;
-   if(!(relD<3.3&&dot>.35)) return {x,y};
+function npcFreePoint(x,y,r=.24) {
+ return fits(x,y,r)&&Math.abs(floorAt(x,y)-floorAt(player.x,player.y))<=.62;
+}
+function npcAnchor(n,t,spawning=false) {
+ const slots={qin:[-2.5,1.6],lin:[-3.3,-1.5],qi:[-4.5,1.0]};
+ const [back,side]=slots[n.squad.id]||[-3,1];
+ const c=Math.cos(t.angle),s=Math.sin(t.angle),base={x:t.x,y:t.y};
+ const options=[[back,side],[back,0],[back,side*1.5],[back-1,side],[back-1,0],
+  [back+.7,side],[back-.7,-side],[back-1.8,0],[-1.7,side*1.5],[-1.5,-side*1.4],
+  [-3.2,-side],[-5.2,0],[-6,side],[-.5,side*2],[0,-side*2]];
+ // Try nearby cell centers too; this covers dead ends and narrow stair/corridor starts.
+ for(let r=2;r<=6;r++) for(let i=0;i<16;i++) {
+  const a=Math.PI+(i-7.5)*Math.PI/8;options.push([Math.cos(a)*r,Math.sin(a)*r]);
+ }
+ let best=null,bestScore=Infinity;
+ for(let i=0;i<options.length;i++) {
+  const [f,l]=options[i],x=base.x+c*f-s*l,y=base.y+s*f+c*l;
+  if(!npcFreePoint(x,y)||Math.hypot(x-player.x,y-player.y)<1.65) continue;
+  if(npcs.some(other=>other!==n&&!other.downed&&
+    Math.hypot(x-(other.anchor||other).x,y-(other.anchor||other).y)<.95)) continue;
+  if(spawning&&npcs.some(other=>Math.hypot(x-other.x,y-other.y)<1.0)) continue;
+  const direct=walkableLine(spawning?player.x:n.x,spawning?player.y:n.y,x,y,.21);
+  // Initial positions should be actually reachable from spawn, not through walls.
+  if(spawning&&!direct) continue;
+  const score=i+(direct?0:8)+(f>0?10:0);
+  if(score<bestScore) {best={x,y};bestScore=score;}
+ }
+ if(!best&&spawning) {
+  // If the start is tight, select a distinct reachable open cell rather than cloning at the player.
+  for(let r=1;r<=8&&!best;r++) for(let oy=-r;oy<=r&&!best;oy++) for(let ox=-r;ox<=r;ox++) {
+   const x=Math.floor(player.x)+ox+.5,y=Math.floor(player.y)+oy+.5;
+   if(!npcFreePoint(x,y)||Math.hypot(x-player.x,y-player.y)<1.05||
+      npcs.some(o=>Math.hypot(x-o.x,y-o.y)<.85)||!nextStepToward(player.x,player.y,x,y)) continue;
+   best={x,y};break;
   }
  }
+ return best;
+}
+function npcMove(n,dx,dy) {
+ const x=n.x,y=n.y,oldDist=Math.hypot(x-player.x,y-player.y);
+ move(n,dx,dy,.21);
+ const newDist=Math.hypot(n.x-player.x,n.y-player.y);
+ // The player remains freely movable; companions yield instead of moving into the player.
+ if(newDist<.92&&newDist<oldDist-.0001) {n.x=x;n.y=y;}
+ return Math.hypot(n.x-x,n.y-y);
+}
+function npcStep(n,tx,ty,speed,dt,stop=.45) {
+ const dx=tx-n.x,dy=ty-n.y,distance=Math.hypot(dx,dy);
+ if(distance<=stop) return 0;
+ let vx=dx,vy=dy,pd=distance,remaining=distance-stop;
+ if(walkableLine(n.x,n.y,tx,ty,.21,stop)) {
+  n.pathPoint=null;n.pathGoal=null;
+ } else {
+  n.pathTimer=(n.pathTimer??0)-dt;
+  if(n.pathTimer<=0||!n.pathPoint||!n.pathGoal||Math.hypot(n.pathGoal.x-tx,n.pathGoal.y-ty)>.7||
+     Math.hypot(n.pathPoint.x-n.x,n.pathPoint.y-n.y)<.14) {
+   let p=nextStepToward(n.x,n.y,tx,ty);
+   if(p&&!walkableLine(n.x,n.y,p.x,p.y,.21)) p={x:Math.floor(n.x)+.5,y:Math.floor(n.y)+.5};
+   n.pathPoint=p;n.pathGoal={x:tx,y:ty};n.pathTimer=.48;
+  }
+  if(!n.pathPoint) return 0;
+  vx=n.pathPoint.x-n.x;vy=n.pathPoint.y-n.y;pd=Math.hypot(vx,vy);remaining=pd;
+ }
+ if(pd<.015) return 0;
+ const stride=Math.min(remaining,speed*dt);
+ const moved=npcMove(n,vx/pd*stride,vy/pd*stride);
+ n.anim+=moved*3.2;
+ return moved;
+}
+function npcYieldPoint(n) {
+ const p=player,c=Math.cos(p.angle),s=Math.sin(p.angle);
+ const dx=n.x-p.x,dy=n.y-p.y,d=Math.hypot(dx,dy);
+ // Right/left signed coordinate must use the same lateral axis as the destination.
+ const side=Math.abs(-s*dx+c*dy)>.12?Math.sign(-s*dx+c*dy):(n.sideBias||1);
+ const points=[[-.5,side*2.3],[.15,side*2.35],[-1.7,side*1.7],[-2.35,0],
+  [.8,side*2.35],[-1.6,-side*1.6],[.15,-side*2.35]];
+ if(d>.01) points.push([(dx*c+dy*s)/d*3.05,(-dx*s+dy*c)/d*3.05]);
+ for(const [f,l] of points) {
+  const x=p.x+c*f-s*l,y=p.y+s*f+c*l;
+  if(!npcFreePoint(x,y)||!walkableLine(n.x,n.y,x,y,.21)) continue;
+  // Avoid taking the short route straight through the player's body.
+  const vx=x-n.x,vy=y-n.y,len2=vx*vx+vy*vy;
+  const k=len2?clamp(((p.x-n.x)*vx+(p.y-n.y)*vy)/len2,0,1):0;
+  const near=Math.hypot(n.x+vx*k-p.x,n.y+vy*k-p.y);
+  if(near<Math.min(.94,d)-.025) continue;
+  if(npcs.some(o=>o!==n&&!o.downed&&Math.hypot(o.x-x,o.y-y)<.82)) continue;
+  return {x,y,fromX:p.x,fromY:p.y,side,parkAhead:f>1.1&&Math.abs(l)<1.3};
+ }
  return null;
+}
+function npcFace(n,angle,dt) {
+ const before=n.yaw??angle;
+ const delta=Math.atan2(Math.sin(angle-before),Math.cos(angle-before));
+ n.yaw=before+clamp(delta,-5.8*dt,5.8*dt);
 }
 function npcTarget(n) {
  let best=null,bestScore=Infinity;
@@ -712,6 +782,7 @@ function npcFire(n,target) {
 function updateNpcs(dt) {
  if(!story) return;
  if(!route.length) updateRoute();
+ const trail=squadTrail();
  for(const n of npcs) {
   n.flash=Math.max(0,n.flash-dt);n.muzzle=Math.max(0,n.muzzle-dt);n.barkCd=Math.max(0,(n.barkCd??0)-dt);
   n.hurtCd=Math.max(0,(n.hurtCd??0)-dt);n.healCd=Math.max(0,(n.healCd??0)-dt);
@@ -735,13 +806,14 @@ function updateNpcs(dt) {
    const distance=Math.hypot(other.x-n.x,other.y-n.y);
    if(distance<rescueDist) {rescueDist=distance;rescue=other;}
   }
-  let desired=null,speed=3.3;
+  const startX=n.x,startY=n.y;
+  let desired=null,speed=3.3,stop=.45;
   if(rescue&&rescueDist<13&&(!target||role==='lin'||rescueDist<7)) {
-   desired={x:rescue.x,y:rescue.y};speed=rescueDist>7?4.7:3.6;n.state='rescue';
+   desired={x:rescue.x,y:rescue.y};speed=rescueDist>7?4.7:3.6;stop=1.1;n.state='rescue';
   } else if(distToPlayer>19) {
-   desired={x:player.x,y:player.y};speed=4.8;n.state='regroup';
+   desired={x:player.x,y:player.y};speed=4.8;stop=2.8;n.state='regroup';
   } else if(role==='lin'&&player.hp<34&&distToPlayer>4.2) {
-   desired={x:player.x,y:player.y};speed=4.6;n.state='regroup';
+   desired={x:player.x,y:player.y};speed=4.6;stop=3.3;n.state='regroup';
   } else if(target) {
    const distance=Math.hypot(target.x-n.x,target.y-n.y),range=n.squad.range||10;
    if(distance>range+1.5) {desired={x:target.x,y:target.y};speed=role==='qi'?4.2:3.6;n.state='advance';}
@@ -750,57 +822,56 @@ function updateNpcs(dt) {
     desired={x:target.x+Math.cos(angle)*range,y:target.y+Math.sin(angle)*range};
     speed=3.3;n.state='hold';
    } else {
-    const angle=Math.atan2(n.y-target.y,n.x-target.x);
-    const side=role==='qi'?(n.flank||(n.flank=Math.random()<.5?-1:1)):role==='lin'?.35:0;
-    const offset=side*(Math.PI/2.6);
-    desired={x:target.x+Math.cos(angle+offset)*range,y:target.y+Math.sin(angle+offset)*range};
-    speed=role==='qi'?3.9:2.8;n.state='fight';
+    // A stationary target no longer generates a constantly rotating destination.
+    n.state='fight';
    }
    n.fireCd=Math.max(0,(n.fireCd??0)-dt);
    if(n.fireCd<=0&&distance<=(n.squad.range||10)+4&&visible(n.x,n.y,target.x,target.y)) npcFire(n,target);
-   n.yaw=Math.atan2(target.y-n.y,target.x-n.x);
   } else {
-   if(!n.anchor||Math.hypot(n.anchor.x-n.x,n.anchor.y-n.y)<1.15||(n.anchorTimer??0)<=0) {
-    n.anchor=npcAnchor(n);n.anchorTimer=4+Math.random()*4;
+   if(n.formationRevision!==trail.revision||!n.anchor) {
+    const point=npcAnchor(n,trail);
+    n.anchor=point||{x:n.x,y:n.y};
+    n.formationRevision=trail.revision;
    }
-   n.anchorTimer-=dt;
-   if(n.anchor) {desired=n.anchor;speed=role==='qi'?3.8:2.9;n.state='patrol';}
+   if(n.anchor) {desired=n.anchor;speed=distToPlayer>7?4.7:3.2;n.state='patrol';}
   }
   const relX=n.x-player.x,relY=n.y-player.y,relD=Math.hypot(relX,relY);
-  if(relD>0.01&&relD<3.3&&n.state!=='rescue') {
-   const dot=(relX*Math.cos(player.angle)+relY*Math.sin(player.angle))/relD;
-   if(dot>.32) {
-    const lateral=relX*Math.sin(player.angle)-relY*Math.cos(player.angle);
-    const side=Math.abs(lateral)>.12?(lateral>=0?1:-1):(n.sideBias||1);
-    desired={x:player.x+Math.cos(player.angle)*.6-Math.sin(player.angle)*side*2.8, y:player.y+Math.sin(player.angle)*.6+Math.cos(player.angle)*side*2.8};
-    speed=3.8;n.state='clear';
-   }
+  const forward=relX*Math.cos(player.angle)+relY*Math.sin(player.angle);
+  const lateral=Math.abs(-relX*Math.sin(player.angle)+relY*Math.cos(player.angle));
+  // Keep one world-space yielding point until the player has moved away. Merely turning
+  // the camera or crossing the centre line cannot reverse the NPC's chosen side.
+  if(n.yieldPoint) {
+   const y=n.yieldPoint,progress=Math.hypot(player.x-y.fromX,player.y-y.fromY);
+   // In a single-file corridor, stop retreating after the first step: the player
+   // can walk past the parked companion rather than chasing them down the hall.
+   const gx=y.x-y.fromX,gy=y.y-y.fromY,length=Math.hypot(gx,gy)||1;
+   const passed=((player.x-y.x)*gx+(player.y-y.y)*gy)/length>.7;
+   if(y.parkAhead?(passed||Math.hypot(player.x-y.x,player.y-y.y)>5.5):progress>1.15) n.yieldPoint=null;
   }
-  if(desired) {
-   const distance=Math.hypot(desired.x-n.x,desired.y-n.y);
-   if(distance>.65&&(n.state!=='fight'||distance>1.2)) npcStep(n,desired.x,desired.y,speed,dt);
-   if(n.state!=='fight'&&distance>.5) n.yaw=Math.atan2(desired.y-n.y,desired.x-n.x);
+  if(!n.yieldPoint&&relD<2.55&&(relD<1.02||(forward>0&&lateral<.68&&forward>relD*.68))) {
+   n.yieldPoint=npcYieldPoint(n);
   }
-  for(const other of npcs) {
+  if(n.yieldPoint) {
+   desired=n.yieldPoint;speed=3.2;stop=.22;n.state='clear';
+  } else if(relD<1.02) {
+   // No open side: wait without walking into the player; movement will reopen a route.
+   desired=null;
+  }
+  if(desired) npcStep(n,desired.x,desired.y,speed,dt,stop);
+  // A small bounded separation replaces the old per-frame sideways pushes.
+  // It cannot cross walls or move toward the player's personal space.
+  if(!n.yieldPoint) for(const other of npcs) {
    if(other===n||other.downed) continue;
-   const dx=n.x-other.x,dy=n.y-other.y,between=Math.hypot(dx,dy);
-   if(between>.01&&between<1.1) move(n,dx/between*.022,dy/between*.022,.21);
+   const dx=n.x-other.x,dy=n.y-other.y,d=Math.hypot(dx,dy);
+   if(d>=.72) continue;
+   const angle=d>.005?Math.atan2(dy,dx):(n.squad.id<other.squad.id?0:Math.PI);
+   const push=Math.min((.72-d)*2.5,.8)*dt;
+   npcMove(n,Math.cos(angle)*push,Math.sin(angle)*push);
   }
-  const dx=n.x-player.x,dy=n.y-player.y,between=Math.hypot(dx,dy);
-  if(between>.01&&between<1.35&&n.state!=='regroup'&&n.state!=='rescue') {
-   const aimX2=Math.cos(player.angle),aimY2=Math.sin(player.angle);
-   const lateral=dx*aimY2-dy*aimX2;
-   const side=lateral>=0?1:-1,push=(1.35-between)/between;
-   move(n,dx/between*push*.7-aimY2*side*.025,dy/between*push*.7+aimX2*side*.025,.21);
-  }
-  const aimX=Math.cos(player.angle),aimY=Math.sin(player.angle);
-  if(between>.01&&between<3.6) {
-   const dot=(dx*aimX+dy*aimY)/between;
-   if(dot>.34) {
-    const side=(dx*aimY-dy*aimX)>=0?1:-1;
-    move(n,-aimY*side*.055,aimX*side*.055,.21);
-   }
-  }
+  const movedX=n.x-startX,movedY=n.y-startY;
+  if(Math.hypot(movedX,movedY)>dt*.16) npcFace(n,Math.atan2(movedY,movedX),dt);
+  else if(target&&!n.yieldPoint) npcFace(n,Math.atan2(target.y-n.y,target.x-n.x),dt);
+  // At rest keep the last orientation; no tracking the player's camera.
   for(const z of enemies) {
    if(Math.hypot(z.x-n.x,z.y-n.y)>.95||!visible(z.x,z.y,n.x,n.y)) continue;
    if((n.hurtCd??0)<=0) {
