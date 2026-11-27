@@ -8,40 +8,43 @@
 <title>破晓守望 · 北岭封锁区</title>
 <meta name="description" content="破晓守望：枪战与剧情双模式。剧情模式跟随三人小队穿越货运港、地铁站、地下隧道、医院与监狱五个战区，击倒感染者与首领。">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="css/game.css?v=20261127g">
+<link rel="stylesheet" href="css/game.css?v=20261127l">
 </head>
 <body>
-<canvas id="world" aria-label="第一人称战场"></canvas><div id="shade"></div><div id="effects"></div><div id="scope" aria-hidden="true"></div>
+<canvas id="world" aria-label="第一人称战场"></canvas><div id="shade"></div><div id="effects"></div><div id="scope" aria-hidden="true"></div><div id="storageNotice" role="status" aria-live="assertive" hidden></div>
 <section class="screen" id="menu">
   <header class="header">
     <div class="brand">
-      <svg class="brandMark" viewBox="0 0 28 28" aria-hidden="true" focusable="false"><path d="M3.5 24.5h21M6.5 24.5V11L14 4.5l7.5 6.5v13M10.5 24.5v-8h7v8M14 4.5v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="square"/></svg>
-      <span class="brandName">北岭封锁区</span>
+      <svg class="brandMark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M3 27h26M8 27V15l8-7 8 7v12M12.5 27v-6.5h7V27M16 4v3M22.5 7.5l2-2M9.5 7.5l-2-2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="square"/></svg>
+      <span class="brandText"><span class="brandName">北岭封锁区</span><span class="brandLatin">NORTHRIDGE</span></span>
+      <span class="brandDivider" aria-hidden="true"></span>
       <span class="brandSub">夜间行动</span>
     </div>
     <div class="headerRight">
+      <span class="profileBadge mono" id="profileBadge">档案 · 默认档案</span>
       <span class="wallet mono" id="menuCredits">₡ 0</span>
       <span class="status">全线封锁</span>
     </div>
   </header>
   <div class="menuMain">
     <div class="hero">
-      <div class="kicker" id="menuKicker">单人生存 / ZOMBIE SURVIVAL</div>
+      <p class="kicker" id="menuKicker">单人生存 / ZOMBIE SURVIVAL</p>
       <h1 class="gameTitle">破晓守望</h1>
+      <p class="titleLatin" aria-hidden="true">DAWNWATCH</p>
       <p class="blurb" id="menuBlurb">雨夜货运港已失守。穿过集装箱区、维修站和装卸场，守住八波感染者。</p>
       <div class="launch"><button class="primary startBtn" id="start">进入隔离区 <span aria-hidden="true">↗</span></button></div>
       <div class="playModes" role="group" aria-label="玩法">
-        <button type="button" class="playMode active" id="styleSurvival" data-style="survival" aria-pressed="true"><b>生存</b><small>守住感染波次</small></button>
-        <button type="button" class="playMode" id="styleStory" data-style="story" aria-pressed="false"><b>剧情</b><small>三人小队 · 五章</small></button>
+        <button type="button" class="playMode active" id="styleSurvival" data-style="survival" aria-pressed="true"><span class="modeNo" aria-hidden="true">01</span><span class="modeBody"><b>生存</b><small>守住感染波次</small></span></button>
+        <button type="button" class="playMode" id="styleStory" data-style="story" aria-pressed="false"><span class="modeNo" aria-hidden="true">02</span><span class="modeBody"><b>剧情</b><small>三人小队 · 五章</small></span></button>
       </div>
       <div id="survivalOptions" class="choiceBlock">
-        <div class="choiceCaption"><span>行动区域</span></div>
+        <div class="choiceCaption"><span>行动区域 / SECTOR</span><span aria-hidden="true">01—05</span></div>
         <div class="mapSelect" id="mapSelect" role="group" aria-label="选择战区">
-          <button type="button" class="mapChoice active" data-map="yard" aria-pressed="true"><b>货运港</b></button>
-          <button type="button" class="mapChoice" data-map="subway" aria-pressed="false"><b>地铁站</b></button>
-          <button type="button" class="mapChoice" data-map="tunnel" aria-pressed="false"><b>隧道</b></button>
-          <button type="button" class="mapChoice" data-map="hospital" aria-pressed="false"><b>医院</b></button>
-          <button type="button" class="mapChoice" data-map="prison" aria-pressed="false"><b>监狱</b></button>
+          <button type="button" class="mapChoice active" data-map="yard" aria-pressed="true"><span class="mapNo" aria-hidden="true">01</span><b>货运港</b><small>PORT</small></button>
+          <button type="button" class="mapChoice" data-map="subway" aria-pressed="false"><span class="mapNo" aria-hidden="true">02</span><b>地铁站</b><small>METRO</small></button>
+          <button type="button" class="mapChoice" data-map="tunnel" aria-pressed="false"><span class="mapNo" aria-hidden="true">03</span><b>隧道</b><small>TUNNEL</small></button>
+          <button type="button" class="mapChoice" data-map="hospital" aria-pressed="false"><span class="mapNo" aria-hidden="true">04</span><b>医院</b><small>WARD</small></button>
+          <button type="button" class="mapChoice" data-map="prison" aria-pressed="false"><span class="mapNo" aria-hidden="true">05</span><b>监狱</b><small>PRISON</small></button>
         </div>
         <div class="modeRow" role="group" aria-label="游戏模式"><span class="modeLabel">强度</span>
           <button type="button" class="modeChoice active" id="modeStandard" aria-pressed="true">标准 8 波</button>
@@ -50,11 +53,12 @@
       </div>
       <div class="storyPanel" id="storyOptions" hidden>
         <p class="storyBrief" id="storyBrief">破晓前最后三小时。带着老秦、林夏和小七穿过封锁区，把感染样本送到北岭大桥的撤离车队。五个战区，十五个阶段，一名叛变的主治医师，和一位不肯开门的典狱长。</p>
-        <div class="choiceCaption"><span>行动章节</span></div>
+        <div class="choiceCaption"><span>行动章节 / CHAPTER</span><span aria-hidden="true">05</span></div>
         <div class="chapterList" id="chapterList" role="group" aria-label="选择章节"></div>
       </div>
       <div class="utilityBar">
         <button type="button" class="utility" id="openArmory">军械库</button>
+        <button type="button" class="utility" id="openProfiles">玩家档案</button>
         <button type="button" class="utility" id="openGuide">感染者图鉴</button>
         <button type="button" class="utility" id="openSettings">设置</button>
         <button type="button" class="utility" id="mute" aria-pressed="true">声音 开</button>
@@ -62,9 +66,22 @@
       <div class="instructions" id="desktopHelp"><span><b class="key">WASD</b>移动</span><span><b class="key">左键</b>射击</span><span><b class="key">右键</b>机瞄</span><span><b class="key">R</b>换弹</span><span><b class="key">1–5 / Q</b>切枪</span><span><b class="key">F</b>近战</span><span><b class="key">G</b>投雷</span><span><b class="key">E</b>补给</span><span><b class="key">M</b>地图</span></div>
       <div class="instructions" id="touchHelp" hidden>左摇杆移动 · 滑动瞄准 · 右侧开火 · 右上角地图</div>
     </div>
-    <div class="mapTag" aria-hidden="true"><small class="mono" id="sectorTag">SECTOR 07 / 63 × 63</small><b id="sectorName">雨夜货运港</b></div>
+    <aside class="scenePanel" aria-label="当前战区">
+      <div class="sceneTop" aria-hidden="true">
+        <span class="sceneLive"><i></i>实时场景 / LIVE</span>
+        <span class="sceneTopRule"></span>
+        <span class="sceneView">战区预览</span>
+      </div>
+      <div class="sceneWindow" aria-hidden="true"><span class="sceneHorizon"></span><span class="sceneCross"></span></div>
+      <div class="sceneInfo">
+        <p class="sceneEyebrow mono">当前战区 / ACTIVE SECTOR</p>
+        <div class="mapTag"><small class="mono" id="sectorTag">SECTOR 07 / 75 × 75</small><b id="sectorName">雨夜货运港</b></div>
+        <p class="sceneTagline" id="sceneTagline">雨夜 · 集装箱码头</p>
+        <div class="sceneFoot"><span>实时渲染 / REAL-TIME</span><span class="buildTag">V3.4 · 11-27</span></div>
+      </div>
+    </aside>
   </div>
-  <footer class="menuFoot"><span id="footSector">SECTOR 07 / 雨夜货运港</span><span class="footMeta"><span id="best"></span><span class="buildTag">V3.3.1 · 11-27</span></span></footer>
+  <footer class="menuFoot"><span id="footSector">SECTOR 07 / 雨夜货运港</span><span class="footMeta"><span id="best"></span></span></footer>
 </section>
 <div id="hud" hidden aria-label="战斗状态">
   <div id="storyHud" hidden aria-hidden="true"><span class="chapterTag" id="storyChapter"></span><div id="storyObjective"></div><div id="storySquad"></div></div>
@@ -117,11 +134,81 @@
  <div class="settingRow"><label for="fxToggle">动态特效</label><output id="fxVal">开</output><input id="fxToggle" type="checkbox" checked></div>
  <p class="armoryHint">设置会保存在浏览器中。降低视野或关闭动态特效可提升低配设备的帧率。</p>
 </dialog>
+<dialog class="guide profiles" id="profiles" aria-labelledby="profilesTitle">
+ <header><h2 id="profilesTitle">玩家档案</h2><span class="label profileLocalTag">本地优先 / LOCAL FIRST</span><button class="subtle" id="closeProfiles" autofocus>关闭</button></header>
+ <div class="profileCurrentBar">
+  <div><small class="profileEyebrow">当前档案</small><strong id="profileCurrentName">默认档案</strong></div>
+  <p class="profileHint">存档默认只保存在此浏览器（localStorage）；云存档未配置时不会上传，也不需要登录。访客可直接游玩；切换档案会刷新页面。</p>
+ </div>
+ <div id="profileList" class="profileList" aria-label="已有档案"></div>
+ <form id="profileCreateForm" class="profileCreate">
+  <label for="profileName">新档案名称（1–24 个字符）</label>
+  <div class="profileCreateRow">
+   <input id="profileName" name="profileName" type="text" maxlength="24" autocomplete="off" placeholder="例如：夜班行动">
+   <button type="submit" class="primary">创建并切换</button>
+  </div>
+ </form>
+ <div class="profileTransfer">
+  <div><b>本地备份</b><p>导出当前档案为 JSON，或把备份导入为一个全新档案。导入不会覆盖或删除现有档案，也不会改动默认旧存档。</p></div>
+  <div class="profileTransferActions">
+   <button type="button" class="subtle" id="profileExport">导出 JSON</button>
+   <button type="button" class="subtle" id="profileImportPick">导入为全新档案</button>
+   <input id="profileImport" type="file" accept="application/json,.json" hidden>
+  </div>
+ </div>
+ <p class="profileStatus" id="profileStatus" role="status" aria-live="polite"></p>
+ <p class="profileHint">备份只包含本游戏的白名单存档键，不含账号、令牌或身份信息。本地存档不是云存档。</p>
+ <section class="cloudSave" id="cloudSave" aria-labelledby="cloudSaveTitle">
+  <header class="cloudHead">
+   <div><b id="cloudSaveTitle">云存档（可选 · 手动上传/下载）</b><small id="cloudSubtitle" hidden>SDK 仅在你主动使用云功能时从同源路径加载；不会自动同步或后台重试。</small></div>
+   <span class="cloudStateTag" id="cloudStateTag" hidden>未配置</span>
+  </header>
+  <div id="cloudAuth" hidden>
+   <div id="cloudSignedOut">
+    <p class="profileHint cloudAuthHint">使用邮箱一次性验证码登录。Supabase 邮件模板必须包含 <code>{{ .Token }}</code>，只发登录链接会导致看不到验证码。</p>
+    <div class="cloudField">
+     <label for="cloudEmail">邮箱</label>
+     <input id="cloudEmail" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com">
+    </div>
+    <div class="cloudAuthActions">
+     <button type="button" class="subtle" id="cloudSendOtp">发送验证码</button>
+     <button type="button" class="subtle" id="cloudCheckSession">检查已有登录状态</button>
+    </div>
+    <div class="cloudOtpRow" id="cloudOtpRow" hidden>
+     <div class="cloudField">
+      <label for="cloudOtp">邮件验证码</label>
+      <input id="cloudOtp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" pattern="[0-9]*" placeholder="6 位数字">
+     </div>
+     <button type="button" class="primary" id="cloudVerifyOtp">验证并登录</button>
+    </div>
+   </div>
+   <div id="cloudSignedIn" hidden>
+    <p class="profileHint">已登录。账号默认槽由 Supabase RLS 按用户隔离；只有你点击下面的按钮才会上传或下载。</p>
+    <div class="cloudActions">
+     <button type="button" class="subtle" id="cloudUpload">上传当前档案</button>
+     <button type="button" class="subtle" id="cloudDownload">从云端下载为全新档案</button>
+     <button type="button" class="subtle" id="cloudSignOut">退出登录</button>
+    </div>
+   </div>
+  </div>
+  <div class="cloudOverwrite" id="cloudOverwrite" hidden>
+   <p id="cloudOverwriteText"></p>
+   <div class="cloudOverwriteActions">
+    <button type="button" class="primary" id="cloudOverwriteConfirm">确认覆盖并上传</button>
+    <button type="button" class="subtle" id="cloudOverwriteCancel">取消</button>
+   </div>
+  </div>
+  <p class="profileStatus" id="cloudStatus" role="status" aria-live="polite">云存档尚未配置。</p>
+  <p class="profileHint" id="cloudHint" hidden>云同步为手动操作，不会自动上传，也不承诺自动合并。上传只包含白名单存档键，不含邮箱、账号或令牌；下载会创建全新本地档案，绝不覆盖当前或旧档案。</p>
+ </section>
+</dialog>
 <script type="importmap">{"imports":{"three":"./vendor/three/three.module.js","three/addons/":"./vendor/three/"}}</script>
-<script src="js/core.js?v=20261127i"></script>
-<script src="js/data.js?v=20261127i"></script>
-<script src="js/game.js?v=20261127i"></script>
-<script src="js/render.js?v=20261127i"></script>
-<script src="js/main.js?v=20261127i"></script>
-<script type="module" src="js/character-models.js?v=20261127i"></script>
+<script src="js/core.js?v=20261127l"></script>
+<script src="js/data.js?v=20261127l"></script>
+<script src="js/profiles.js?v=20261127l"></script>
+<script src="js/game.js?v=20261127l"></script>
+<script src="js/render.js?v=20261127l"></script>
+<script src="js/main.js?v=20261127l"></script>
+<script type="module" src="js/character-models.js?v=20261127l"></script>
+<script type="module" src="js/cloud-ui.js?v=20261127l"></script>
 </body></html>

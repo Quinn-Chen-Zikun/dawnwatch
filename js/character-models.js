@@ -24,7 +24,8 @@ const STYLES={};
 for(const id in RAW_STYLES){const s=RAW_STYLES[id];STYLES[id]={...s,key:id,colors:{cloth:new THREE.Color(s.cloth),pants:new THREE.Color(s.pants),skin:new THREE.Color(s.skin),hair:new THREE.Color(s.hair),accent:new THREE.Color(s.accent),neutral:new THREE.Color('#96938a')}};}
 const CLIP_GROUPS={idle:['idle','stand','breath'],walk:['walk','walking'],shuffle:['slouch walk','walk_slouch','walkslouch'],run:['run','running','sprint','jog'],hit:['hit','hurt','damage','flinch','impact'],death:['death','dead','die','dying','lie_down','liedown','fall','lying'],down:['down','downed','kneel','crouch']};
 const state={ready:false,disabled:false,renderer:null,gl:null,canvas:null,scene:null,camera:null,loader:null,models:new Map(),loadQueue:[],active:new Map(),pool:new Map(),claimed:new Set(),candidates:[],frameRecs:[],lastTime:0,lastCleanup:0,theme:null};
-let camFill=null,ambient=null,hemi=null,keyLight=null;
+let camFill=null,ambient=null,hemi=null,keyLight=null,rimLight=null;
+let shadowTexture=null,shadowMaterial=null,shadowGeometry=null;
 const proj=new THREE.Matrix4();
 
 function styleFor(actor){
@@ -32,16 +33,59 @@ function styleFor(actor){
  return STYLES[actor.type]||STYLES.walker;
 }
 function normName(name){return String(name||'').toLowerCase().replace(/^.*\|/,'').replace(/[^a-z0-9]/g,'');}
+/* GLB material roles. lin/qi/qin/walker/runner carry Hair (MASK), Skin details /
+   Eyebrows / Eyelashes (BLEND) and a glossy Eyes material; qin also has a Cap. */
+function materialKind(name){
+ const n=String(name||'').toLowerCase();
+ if(n.indexOf('skin details')>=0||n.indexOf('skin detail')>=0)return 'skinDetail';
+ if(/lash/.test(n))return 'lash';
+ if(/brow/.test(n))return 'brow';
+ if(/eye|iris|pupil|cornea/.test(n))return 'eye';
+ if(/teeth|tooth/.test(n))return 'teeth';
+ if(/tongue|mouth|lip/.test(n))return 'mouth';
+ if(/underbrim/.test(n))return 'trim';
+ if(/hair/.test(n))return 'hair';
+ if(/cap|hat|helmet|hood/.test(n))return 'cap';
+ if(/boot|shoe|foot/.test(n))return 'boot';
+ if(/pant|trouser|jean|short|skirt|leg/.test(n))return 'pants';
+ if(/shirt|cloth|jacket|coat|top|tunic|uniform|vest|sleeve|sweater|overcoat|scrub|tatter|fatigue|dress/.test(n))return 'cloth';
+ if(/belt|buckle|pouch|strap|harness|gear|armor|pauldron|glove|scarf|patch|badge|cross|button/.test(n))return 'gear';
+ if(/skin|body|face|head|hand|arm|neck|flesh/.test(n))return 'skin';
+ return 'misc';
+}
 function pickClip(clips,aliases){
  for(const alias of aliases){const a=normName(alias);for(const c of clips)if(normName(c.name)===a)return c;for(const c of clips)if(normName(c.name).indexOf(a)>=0)return c;}
  return null;
 }
-function tuneMaterial(m){
+function tuneMaterial(m,kind){
  const c=m.clone();
- c.depthTest=true;c.depthWrite=true;c.fog=true;
- if(c.isMeshStandardMaterial){c.metalness=0;c.roughness=Math.max(.62,Math.min(1,c.roughness==null?1:c.roughness));c.envMapIntensity=0;c.emissiveIntensity=0;if(c.emissive)c.emissive.setRGB(0,0,0);}
- if(c.transparent&&c.map){c.transparent=false;c.alphaTest=Math.max(c.alphaTest||0,.3);}else if(c.transparent){c.transparent=false;}
- c.side=m.side;
+ c.depthTest=true;c.fog=true;c.side=m.side;
+ if(c.isMeshStandardMaterial){
+  c.metalness=0;c.envMapIntensity=0;c.emissiveIntensity=0;if(c.emissive)c.emissive.setRGB(0,0,0);
+  const r=c.roughness==null?1:c.roughness;
+  if(kind==='eye')c.roughness=Math.max(.12,Math.min(.30,r));
+  else if(kind==='skin')c.roughness=Math.max(.58,Math.min(.90,r));
+  else if(kind==='skinDetail')c.roughness=Math.max(.74,Math.min(.95,r));
+  else if(kind==='hair')c.roughness=Math.max(.55,Math.min(.80,r));
+  else if(kind==='teeth'||kind==='mouth')c.roughness=Math.max(.30,Math.min(.70,r));
+  else c.roughness=Math.max(.72,Math.min(1,r));
+ }
+ if(kind==='hair'){
+  /* Keep the authored MASK, but soften the 0.5 cutoff a little: at mip level the
+     thin hair cards average below 0.5 and the scalp reads as bald up close. */
+  c.transparent=false;c.depthWrite=true;c.depthTest=true;
+  c.alphaTest=Math.max(.26,Math.min(.34,c.alphaTest||.5));
+ } else if(kind==='skinDetail'||kind==='brow'||kind==='lash'){
+  /* Facial detail, brows and lashes are BLEND texel gradients. Alpha-testing
+     them turns soft stubble into opaque dark plaques. Keep them blended, never
+     write depth, and offset them off the skin shell to avoid z-fighting. */
+  c.transparent=true;c.alphaTest=0;c.depthWrite=false;c.depthTest=true;
+  c.polygonOffset=true;c.polygonOffsetFactor=-1;c.polygonOffsetUnits=-1;
+  c.premultipliedAlpha=false;c.blending=THREE.NormalBlending;c.opacity=Math.min(1,Math.max(.5,m.opacity==null?1:m.opacity));
+ } else {
+  c.transparent=false;c.depthWrite=true;c.depthTest=true;
+  c.alphaTest=c.alphaTest?Math.max(.35,Math.min(.60,c.alphaTest)):0;
+ }
  return c;
 }
 function init(ctx){
@@ -57,18 +101,37 @@ function init(ctx){
  }catch(error){state.disabled=true;console.warn('Character mesh renderer unavailable:',error.message);return;}
  const scene=new THREE.Scene();
  scene.fog=new THREE.Fog(0x0a1112,11,38);
- ambient=new THREE.AmbientLight(0x9aa7a2,.42);scene.add(ambient);
- hemi=new THREE.HemisphereLight(0x9fc1c2,0x26251d,.5);scene.add(hemi);
- keyLight=new THREE.DirectionalLight(0xffdfb8,.48);keyLight.position.set(-4,8,3);scene.add(keyLight);scene.add(keyLight.target);
- camFill=new THREE.DirectionalLight(0xdfe8ff,.5);scene.add(camFill);scene.add(camFill.target);
+ ambient=new THREE.AmbientLight(0x9aa7a2,.34);scene.add(ambient);
+ hemi=new THREE.HemisphereLight(0xa6c3c2,0x2b2820,.56);scene.add(hemi);
+ keyLight=new THREE.DirectionalLight(0xffdfb8,.52);keyLight.position.set(-4,8,3);scene.add(keyLight);scene.add(keyLight.target);
+ camFill=new THREE.DirectionalLight(0xdfe8ff,.46);scene.add(camFill);scene.add(camFill.target);
+ rimLight=new THREE.DirectionalLight(0xa9d3dd,.38);scene.add(rimLight);scene.add(rimLight.target);
  state.scene=scene;
  state.camera=new THREE.PerspectiveCamera(60,1,.05,120);state.camera.rotation.order='YXZ';
  state.loader=new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
 }
 function applyTheme(theme){
  if(!theme||state.theme===theme)return;state.theme=theme;
- if(state.scene&&state.scene.fog&&theme.fog){state.scene.fog.color.setRGB(theme.fog[0],theme.fog[1],theme.fog[2]);}
- if(ambient&&theme.ambient){ambient.color.setRGB(theme.ambient[0]+.02,theme.ambient[1]+.02,theme.ambient[2]+.02);}
+ const fog=theme.fog||[.10,.18,.19],amb=theme.ambient||[.34,.44,.47],ground=theme.ground||[.25,.27,.27];
+ if(state.scene&&state.scene.fog){
+  state.scene.fog.color.setRGB(fog[0],fog[1],fog[2]);
+  state.scene.fog.near=theme.style==='tunnel'?9:11;
+  state.scene.fog.far=theme.style==='yard'?38:34;
+ }
+ if(ambient)ambient.color.setRGB(Math.min(1,amb[0]*.92+.02),Math.min(1,amb[1]*.92+.02),Math.min(1,amb[2]*.92+.02));
+ if(hemi){
+  hemi.color.setRGB(Math.min(1,amb[0]*.84+.06),Math.min(1,amb[1]*.88+.05),Math.min(1,amb[2]*.90+.05));
+  hemi.groundColor.setRGB(Math.min(1,ground[0]*.92),Math.min(1,ground[1]*.90),Math.min(1,ground[2]*.86));
+ }
+ if(keyLight){
+  const warm=theme.style==='yard'?1:theme.style==='hospital'?.6:.3;
+  keyLight.color.setRGB(1,.83+.07*warm,.70+.13*warm);
+  keyLight.intensity=.42+.10*warm;
+ }
+ if(rimLight){
+  rimLight.color.setRGB(Math.min(1,amb[2]*1.25+.10),Math.min(1,amb[1]*1.10+.08),Math.min(1,amb[0]*.95+.06));
+  rimLight.intensity=theme.style==='tunnel'?.40:.34;
+ }
 }
 function updateCamera(ctx){
  const cam=state.camera;if(!cam)return;
@@ -79,6 +142,14 @@ function updateCamera(ctx){
  proj.set(sx,0,0,0, 0,sy,uPitch,0, 0,0,-1.002,-.122, 0,0,-1,0);
  cam.projectionMatrix.copy(proj);cam.projectionMatrixInverse.copy(proj).invert();
  if(camFill){camFill.position.copy(cam.position);camFill.position.y+=.25;camFill.target.position.set(cam.position.x+ctx.dx*3,cam.position.y-.1,cam.position.z+ctx.dy*3);}
+ if(rimLight){
+  /* Cold edge light from beyond the actors, aimed back toward the eye: it
+     separates dark hair/shoulders from the fogged map without lifting the
+     whole body like a fill light. */
+  const rx=-ctx.dy,rz=ctx.dx;
+  rimLight.position.set(cam.position.x+ctx.dx*5.0+rx*3.0,cam.position.y+2.0,cam.position.z+ctx.dy*5.0+rz*3.0);
+  rimLight.target.position.set(cam.position.x-ctx.dx*2.0,cam.position.y+.4,cam.position.z-ctx.dy*2.0);
+ }
 }
 function queueModel(key){
  let m=state.models.get(key);if(m)return;
@@ -100,53 +171,109 @@ function pumpLoads(){
   },undefined,error=>{m.status='failed';console.warn('Character GLB unavailable:',key,error&&error.message||error);});
  }
 }
+function createContactShadowAssets(){
+ if(shadowMaterial)return;
+ const image=document.createElement('canvas');image.width=image.height=64;
+ const p=image.getContext('2d');
+ const g=p.createRadialGradient(32,32,2,32,32,31);
+ g.addColorStop(0,'rgba(255,255,255,.64)');
+ g.addColorStop(.28,'rgba(255,255,255,.44)');
+ g.addColorStop(.58,'rgba(255,255,255,.17)');
+ g.addColorStop(1,'rgba(255,255,255,0)');
+ p.fillStyle=g;p.fillRect(0,0,64,64);
+ shadowTexture=new THREE.CanvasTexture(image);
+ shadowTexture.minFilter=THREE.LinearFilter;
+ shadowTexture.magFilter=THREE.LinearFilter;
+ shadowTexture.generateMipmaps=false;
+ shadowGeometry=new THREE.CircleGeometry(1,22);
+ shadowMaterial=new THREE.MeshBasicMaterial({map:shadowTexture,color:0x060b0c,transparent:true,opacity:.52,depthWrite:false,depthTest:true,side:THREE.DoubleSide,fog:true,toneMapped:false,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1});
+}
+function createContactShadow(){
+ createContactShadowAssets();
+ const mesh=new THREE.Mesh(shadowGeometry,shadowMaterial);
+ mesh.rotation.x=-Math.PI/2;
+ mesh.position.y=.002;
+ mesh.renderOrder=1;
+ mesh.frustumCulled=false;
+ mesh.scale.set(.36,.46,1);
+ return mesh;
+}
 function createRecord(key,def){
- const root=new THREE.Group(),fall=new THREE.Group(),scaled=new THREE.Group(),model=cloneSkeleton(def.root);
- model.position.set(0,-def.footY,0);scaled.add(model);fall.add(scaled);root.add(fall);state.scene.add(root);root.visible=false;
+ const root=new THREE.Group(),fall=new THREE.Group(),scaled=new THREE.Group(),breath=new THREE.Group(),model=cloneSkeleton(def.root);
+ /* Small chest-height pivot for procedural breathing/idle weight shift. The
+    baked clips remain untouched; this group only adds a few millimetres. */
+ breath.position.y=1.08;
+ model.position.set(0,-def.footY-1.08,0);breath.add(model);scaled.add(breath);fall.add(scaled);root.add(fall);state.scene.add(root);root.visible=false;
+ const shadow=createContactShadow();root.add(shadow);
  const materials=[];
  model.traverse(o=>{
   if(!o.isMesh&&!o.isSkinnedMesh)return;
   o.frustumCulled=false;o.castShadow=false;o.receiveShadow=false;
   const src=o.material;
-  const conv=m=>{const c=tuneMaterial(m);materials.push({mat:c,base:c.color?c.color.clone():new THREE.Color(1,1,1),name:(m.name||'').toLowerCase()});return c;};
+  const conv=m=>{
+   const kind=materialKind(m.name);
+   const c=tuneMaterial(m,kind);
+   /* Blend layers must draw after the opaque skin/hair: details first, then
+      brows, then lashes. */
+   o.renderOrder=kind==='skinDetail'?2:kind==='brow'?3:kind==='lash'?4:0;
+   materials.push({mat:c,base:c.color?c.color.clone():new THREE.Color(1,1,1),name:(m.name||'').toLowerCase(),kind});
+   return c;
+  };
   o.material=Array.isArray(src)?src.map(conv):conv(src);
  });
- const rec={root,fall,scaled,model,mixer:new THREE.AnimationMixer(model),actions:{},materials,modelKey:key,actor:null,style:null,styleSig:null,mode:null,action:null,speed:0,yaw:0,lastX:0,lastY:0,hitUntil:0,hitReady:0,bobPhase:0,lastSeen:0};
+ const rec={root,fall,scaled,breath,shadow,model,mixer:new THREE.AnimationMixer(model),actions:{},materials,modelKey:key,actor:null,style:null,styleSig:null,mode:null,loco:'idle',action:null,speed:0,yaw:0,lastX:0,lastY:0,hitUntil:0,hitReady:0,bobPhase:0,breathPhase:Math.random()*TAU,animSeed:Math.random(),phase:Math.random()*TAU,lastSeen:0};
  for(const kind in CLIP_GROUPS){const clip=pickClip(def.clips,CLIP_GROUPS[kind]);if(clip)rec.actions[kind]=rec.mixer.clipAction(clip);}
  return rec;
 }
 function grimeMaterial(material,kind){
+ if(material.userData.dawnGrime===kind)return;
+ material.userData.dawnGrime=kind;
  const shade=kind==='skin'
-  ? 'float gray=dot(diffuseColor.rgb,vec3(.299,.587,.114)); diffuseColor.rgb=mix(diffuseColor.rgb,vec3(gray*.74,gray*.88,gray*.73),.63);'
-  : 'float gray=dot(diffuseColor.rgb,vec3(.299,.587,.114)); diffuseColor.rgb=mix(diffuseColor.rgb,vec3(gray*.75,gray*.72,gray*.61),.44);';
+  ? 'float gray=dot(diffuseColor.rgb,vec3(.299,.587,.114)); vec3 pallid=vec3(gray*.80,gray*.91,gray*.79); diffuseColor.rgb=mix(diffuseColor.rgb,pallid,.42);'
+  : 'float gray=dot(diffuseColor.rgb,vec3(.299,.587,.114)); vec3 pallid=vec3(gray*.78,gray*.75,gray*.64); diffuseColor.rgb=mix(diffuseColor.rgb,pallid,.36);';
  material.onBeforeCompile=shader=>{
   shader.fragmentShader=shader.fragmentShader.replace('#include <color_fragment>',['#include <color_fragment>',shade].join(String.fromCharCode(10)));
  };
  material.customProgramCacheKey=()=>('dawnwatch-grime-'+kind);
  material.needsUpdate=true;
 }
+function cleanMaterial(item){
+ const material=item.mat;
+ if(!material.userData.dawnGrime)return;
+ material.userData.dawnGrime=false;
+ material.onBeforeCompile=()=>{};
+ material.customProgramCacheKey=()=>('dawnwatch-clean');
+ material.needsUpdate=true;
+}
 function applyStyle(rec,style){
  if(!style||rec.styleSig===style.key)return;rec.styleSig=style.key;
+ const infected=!['qin','lin','qi'].includes(style.key);
+ const bootTint=new THREE.Color('#2b2d2a');
  for(const item of rec.materials){
-  const n=item.name;let target=style.colors.neutral,strength=.1;
-  if(/eye|iris|pupil|cornea/.test(n)){item.mat.color.copy(item.base);continue;}
-  if(/lash|brow|hair|beard|stubble/.test(n)){target=style.colors.hair;strength=.72;}
-  else if(/pant|trouser|jean|short|skirt|leg/.test(n)){target=style.colors.pants;strength=item.mat.map?.55:.8;}
-  else if(/shoe|boot|foot/.test(n)){target=new THREE.Color('#2b2d2a');strength=.6;}
-  else if(/shirt|cloth|jacket|coat|top|tunic|uniform|vest|sleeve|sweater/.test(n)){target=style.colors.cloth;strength=item.mat.map?.52:.8;}
-  else if(/accent|strap|patch|gear|badge|belt/.test(n)){target=style.colors.accent;strength=.62;}
-  else if(/skin|body|face|head|hand|arm|neck|flesh/.test(n)){target=style.colors.skin;strength=item.mat.map?(['qin','lin','qi'].includes(style.key)?.12:.36):.58;}
-  else {target=item.mat.map?style.colors.neutral:style.colors.cloth;strength=item.mat.map?.1:.42;}
-  item.mat.color.copy(item.base).lerp(target,strength);
-  const infected=!['qin','lin','qi'].includes(style.key);
-  if(infected&&item.mat.isMeshStandardMaterial){
-   if(/skin|body|face|head|hand|arm|neck|flesh/.test(n))grimeMaterial(item.mat,'skin');
-   else if(/pant|trouser|jean|short|skirt|shirt|cloth|jacket|coat|top|tunic|uniform|vest|sleeve|sweater|outfit/.test(n))grimeMaterial(item.mat,'cloth');
-  }else {
-   item.mat.onBeforeCompile=()=>{};
-   item.mat.customProgramCacheKey=()=>('dawnwatch-clean');
-   item.mat.needsUpdate=true;
+  const kind=item.kind,n=item.name;
+  /* Eyes, teeth, tongue, cap underbrim and the BLEND skin-detail map keep their
+     authored colours. Tinting or grime-multiplying them is what blackened the
+     stubble and mouth in the previous pass. */
+  if(kind==='eye'||kind==='teeth'||kind==='mouth'||kind==='skinDetail'||kind==='trim'){
+   item.mat.color.copy(item.base);cleanMaterial(item);continue;
   }
+  let target=style.colors.neutral,strength=.12;
+  if(kind==='hair'){target=style.colors.hair;strength=item.mat.map?.30:.50;}
+  else if(kind==='brow'||kind==='lash'){target=style.colors.hair;strength=.62;}
+  else if(kind==='pants'){target=style.colors.pants;strength=item.mat.map?.5:.78;}
+  else if(kind==='cloth'){target=style.colors.cloth;strength=item.mat.map?.5:.8;}
+  else if(kind==='cap'){target=style.colors.cloth;strength=.45;}
+  else if(kind==='boot'){target=bootTint;strength=item.mat.map?.45:.62;}
+  else if(kind==='gear'){
+   if(/leather armor|pauldron|glove/.test(n)){target=style.colors.pants;strength=.32;}
+   else if(/cross|button/.test(n)){target=style.colors.accent;strength=.58;}
+   else {target=style.colors.accent;strength=.38;}
+  }
+  else if(kind==='skin'){target=style.colors.skin;strength=item.mat.map?(infected?.20:.10):.5;}
+  else {target=item.mat.map?style.colors.neutral:style.colors.cloth;strength=item.mat.map?.1:.4;}
+  item.mat.color.copy(item.base).lerp(target,strength);
+  if(infected&&(kind==='skin'||kind==='cloth'||kind==='pants'||kind==='boot'||kind==='cap'))grimeMaterial(item.mat,kind==='skin'?'skin':'cloth');
+  else cleanMaterial(item);
  }
 }
 function applyHeight(rec,actor,ctx,def){
@@ -159,8 +286,10 @@ function acquire(actor,style,dist,def,ctx){
  if(pool&&pool.length)rec=pool.pop();
  if(!rec)rec=createRecord(style.model,def);
  rec.actor=actor;rec.modelKey=style.model;rec.style=style;rec.styleSig=null;
- rec.root.visible=true;rec.speed=0;rec.mode=null;rec.action=null;rec.hitUntil=0;rec.hitReady=0;rec.bobPhase=0;
- rec.fall.rotation.set(0,0,0);rec.fall.position.y=0;rec.mixer.stopAllAction();
+ rec.root.visible=true;rec.speed=0;rec.mode=null;rec.loco='idle';rec.action=null;rec.hitUntil=0;rec.hitReady=0;rec.bobPhase=0;
+ rec.breathPhase=Math.random()*TAU;rec.phase=Math.random()*TAU;
+ rec.fall.rotation.set(0,0,0);rec.fall.position.set(0,0,0);rec.breath.rotation.set(0,0,0);
+ rec.shadow.scale.set(.36,.46,1);rec.mixer.stopAllAction();
  rec.lastX=actor.x;rec.lastY=actor.y;rec.lastSeen=performance.now()/1000;
  rec.yaw=Number.isFinite(actor.yaw)?actor.yaw:Math.atan2(ctx.view.y-actor.y,ctx.view.x-actor.x);
  applyStyle(rec,style);applyHeight(rec,actor,ctx,def);
@@ -179,8 +308,10 @@ function playAction(rec,action,once,fade){
  action.reset();action.enabled=true;action.setEffectiveWeight(1);action.setEffectiveTimeScale(1);
  action.setLoop(once?THREE.LoopOnce:THREE.LoopRepeat,once?1:Infinity);action.clampWhenFinished=!!once;
  action.play();
- if(prev&&prev!==action&&prev.isRunning())action.crossFadeFrom(prev,fade||.2,true);
- else if(!prev)action.fadeIn(fade||.15);
+ if(prev&&prev!==action){
+  if(prev.isRunning())action.crossFadeFrom(prev,fade||.2,true);
+  else {prev.fadeOut(fade||.2);action.fadeIn(fade||.2);}
+ } else if(!prev)action.fadeIn(fade||.15);
  rec.action=action;
 }
 function updateActor(rec,ctx,dt,now){
@@ -190,19 +321,33 @@ function updateActor(rec,ctx,dt,now){
  rec.root.position.set(a.x,(Number.isFinite(floor)?floor:0)+.012,a.y);
  let inst=Math.hypot(a.x-rec.lastX,a.y-rec.lastY)/Math.max(dt,.0001);
  if(!Number.isFinite(inst)||inst>8)inst=0;
- rec.speed+=(Math.min(7,inst)-rec.speed)*Math.min(1,dt*10);
+ const accelerating=inst>rec.speed;
+ rec.speed+=(Math.min(7,inst)-rec.speed)*Math.min(1,dt*(accelerating?10:14));
  rec.lastX=a.x;rec.lastY=a.y;
  const dead=!!a.dead,down=!!a.downed;
  if(dead||down)rec.speed=0;
- let yaw=Number.isFinite(a.yaw)?a.yaw:Math.atan2(ctx.view.y-a.y,ctx.view.x-a.x);
+ /* Displacement-driven gait with hysteresis: idle<->walk and walk<->run keep
+    distinct enter/exit thresholds so a stop does not chatter or spin on the spot. */
+ let loco=rec.loco||'idle';
+ const runOn=a.type==='runner'?1.0:2.15,runOff=a.type==='runner'?.85:1.62;
+ if(loco==='run'){if(rec.speed<runOff)loco='walk';}
+ else if(loco==='walk'){if(rec.speed>runOn)loco='run';else if(rec.speed<.11)loco='idle';}
+ else {if(rec.speed>runOn)loco='run';else if(rec.speed>.20)loco='walk';}
+ if(dead||down)loco='idle';
+ rec.loco=loco;
+ let yaw;
+ if(Number.isFinite(a.yaw))yaw=a.yaw;
+ else if(rec.speed>.14||dead||down||rec.mode==='hit')yaw=Math.atan2(ctx.view.y-a.y,ctx.view.x-a.x);
+ else yaw=rec.yaw;
  if(dead&&Number.isFinite(a.deathDir))yaw=a.deathDir;
  else if(down&&Number.isFinite(a.downDir))yaw=a.downDir;
- let diff=((yaw-rec.yaw+Math.PI)%TAU+TAU)%TAU-Math.PI;
- rec.yaw+=diff*Math.min(1,dt*(dead||down?13:8));
+ const diff=((yaw-rec.yaw+Math.PI)%TAU+TAU)%TAU-Math.PI;
+ const turnRate=dead||down?13:(rec.speed>.18?8:4.2);
+ if(Math.abs(diff)>.0035)rec.yaw+=diff*Math.min(1,dt*turnRate);
  rec.root.rotation.y=Math.PI/2-rec.yaw;
  if(!dead&&!down&&a.flash>0&&now>=rec.hitReady){rec.hitReady=now+.55;const hit=rec.actions.hit;rec.hitUntil=now+(hit?Math.max(.22,hit.getClip().duration*.85):.2);}
  const hit=!dead&&!down&&now<rec.hitUntil;
- let mode=dead?'death':down?'down':hit?'hit':rec.speed>.18?((rec.speed>2.1||(a.type==='runner'&&rec.speed>1))?'run':'walk'):'idle';
+ const mode=dead?'death':down?'down':hit?'hit':loco;
  let action=null;
  if(mode==='death')action=rec.actions.death||null;
  else if(mode==='down')action=rec.actions.down||rec.actions.death||null;
@@ -211,16 +356,50 @@ function updateActor(rec,ctx,dt,now){
  else if(mode==='walk')action=(!a.friendly&&a.type!=='runner'?rec.actions.shuffle:null)||rec.actions.walk||rec.actions.run||rec.actions.idle||null;
  else action=rec.actions.idle||null;
  const once=mode==='death'||mode==='down';
- if(mode!==rec.mode||(once&&rec.action!==action)){playAction(rec,action,once,.22);rec.mode=mode;}
- if(action&&(mode==='walk'||mode==='run'))action.setEffectiveTimeScale(Math.max(.65,Math.min(1.55,rec.speed/(mode==='run'?3.2:1.25))));
- let fallTarget=!a.friendly&&!dead&&!down?(a.type==='runner'?.11:a.type==='brute'?.07:.13):0;
+ if(mode!==rec.mode||(once&&rec.action!==action)){
+  let fade=.22;
+  if(mode==='death'||mode==='down')fade=.30;
+  else if(mode==='hit')fade=.12;
+  else if(rec.mode==='hit')fade=.28;
+  else if((rec.mode==='idle')!==(mode==='idle'))fade=.30;
+  else fade=.18;
+  playAction(rec,action,once,fade);rec.mode=mode;
+ }
+ if(action){
+  if(mode==='walk'||mode==='run'){
+   const ref=mode==='run'?3.15:(!a.friendly&&a.type!=='runner'?1.02:1.32);
+   action.setEffectiveTimeScale(Math.max(.55,Math.min(1.65,rec.speed/ref)));
+  } else if(mode==='idle')action.setEffectiveTimeScale(.90+rec.animSeed*.12);
+ }
+ const hunch=!a.friendly&&!dead&&!down?(a.type==='runner'?.10:a.type==='brute'?.07:.12):0;
+ let fallTarget=hunch;
+ if(!dead&&!down)fallTarget+=loco==='run'?.06:loco==='walk'?.02:0;
  if(mode==='death'&&!rec.actions.death){const t=Math.max(0,Math.min(1,(a.deathT||0)/.62));fallTarget=-1.45*t*t*(3-2*t);}
  else if(mode==='down'&&!rec.actions.down&&!rec.actions.death){const t=Math.max(0,Math.min(1,(a.downT||0)/.62));fallTarget=-1.35*t*t*(3-2*t);}
  if(mode==='hit')fallTarget-=Math.min(.12,Math.max(0,a.flash||0)*.8);
  rec.fall.rotation.x+=(fallTarget-rec.fall.rotation.x)*Math.min(1,dt*9);
- rec.bobPhase+=dt*(mode==='run'?10.5:mode==='walk'?6.2:2.1);
+ /* Gait phase follows real displacement; idle uses a slow breath instead. */
+ rec.breathPhase+=dt*(1.02+rec.animSeed*.30);
+ const pace=dead||down?0:Math.min(11.5,1.6+rec.speed*2.4)+(dead||down?0:2.2);
+ rec.bobPhase+=dt*pace;
+ const swayAmp=dead||down?0:mode==='run'?.030:mode==='walk'?.016:.0035;
+ const swayTarget=Math.sin(rec.bobPhase*.5+rec.phase)*swayAmp;
+ rec.fall.rotation.z+=(swayTarget-rec.fall.rotation.z)*Math.min(1,dt*7);
  const amp=dead||down?0:mode==='run'?.026:mode==='walk'?.016:.004;
- rec.fall.position.y+=(Math.abs(Math.sin(rec.bobPhase))*amp-rec.fall.position.y)*Math.min(1,dt*12);
+ const lift=dead||down?0:((mode==='walk'||mode==='run')?Math.abs(Math.sin(rec.bobPhase))*amp:(Math.sin(rec.breathPhase)*.5+.5)*.0045);
+ rec.fall.position.y+=(lift-rec.fall.position.y)*Math.min(1,dt*12);
+ if(rec.breath){
+  const breathe=dead||down?0:mode==='idle'?1:mode==='walk'?.36:.22;
+  rec.breath.rotation.x=(Math.sin(rec.breathPhase)*.0072+Math.sin(rec.breathPhase*2.13+1.4)*.0023)*breathe;
+  rec.breath.rotation.z=Math.sin(rec.breathPhase*.57+rec.phase)*.0042*breathe;
+  rec.breath.rotation.y=0;
+ }
+ if(rec.shadow){
+  const s=Math.abs(rec.scaled.scale.x)||1;
+  const heavy=!a.friendly&&(a.type==='brute'||a.type==='boss');
+  const grow=dead?1.6:down?1.25:1;
+  rec.shadow.scale.set((heavy?.50:.36)*s*grow,(heavy?.58:.46)*s*grow,1);
+ }
  rec.mixer.update(dt);
 }
 function claim(ctx){
@@ -277,4 +456,4 @@ function render(){
  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,null);
  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);gl.pixelStorei(gl.UNPACK_ALIGNMENT,4);
 }
-window.DawnwatchCharacters={claim,render,status:()=>({disabled:state.disabled,models:Array.from(state.models,([key,data])=>[key,data.status]),active:state.active.size,claimed:state.claimed.size,lost:!!state.gl?.isContextLost()})};
+window.DawnwatchCharacters={claim,render,status:()=>({disabled:state.disabled,models:Array.from(state.models,([key,data])=>[key,data.status]),active:state.active.size,claimed:state.claimed.size,lost:!!state.gl?.isContextLost()}),debug:()=>Array.from(state.active.values()).filter(r=>r.actor).map(r=>({id:r.actor.squad&&r.actor.squad.id||r.actor.type,model:r.modelKey,mode:r.mode,loco:r.loco,speed:+r.speed.toFixed(2),clips:Object.keys(r.actions),materials:r.materials.map(m=>m.name+'='+m.kind)}))};

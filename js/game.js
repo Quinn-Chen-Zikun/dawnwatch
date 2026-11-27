@@ -300,6 +300,7 @@ function syncMenu() {
  $('start').innerHTML=storyMode?((storyProgress>0?'继续':'开始')+'战役 · '+chapter.code+' <span aria-hidden="true">↗</span>'):'进入隔离区 <span aria-hidden="true">↗</span>';
  $('menuKicker').textContent=storyMode?'剧情战役 / STORY CAMPAIGN · 三人小队':'单人生存 / ZOMBIE SURVIVAL';
  $('menuBlurb').textContent=storyMode?chapter.brief:def.blurb;
+ $('sceneTagline').textContent=def.tagline;
  $('sectorTag').textContent=storyMode?(chapter.place+' / '+columns+' × '+rows):def.code+' / '+columns+' × '+rows;
  $('sectorName').textContent=storyMode?chapter.title:def.name;
  $('footSector').textContent=storyMode?('CAMPAIGN · '+chapter.place):(def.name+' · 南侧通往'+ANNEXES[selectedMap].name);

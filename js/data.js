@@ -693,6 +693,304 @@ function buildMezzanine(def,id) {
  }
  def.rows=g.map(row=>row.join(''));
 }
+
+/* ---- 外环扩建：63×63 → 75×75 ------------------------------------------
+   旧 63×63 区域、既有补给/出生点、设施索引与二层平台保持不变；只在东、
+   南两侧新增架空探索区。每个新区域至少两条连续通路，外边界闭合。      */
+const FRONTIER_GATES={
+ yard:{east:[[7,8],[26,27],[47,48]],south:[[12,13],[31,32],[50,51]]},
+ subway:{east:[[15,16],[31,32],[52,53]],south:[[15,16],[35,36],[52,53]]},
+ tunnel:{east:[[6,7],[23,24],[45,46]],south:[[10,11],[28,29],[47,48]]},
+ hospital:{east:[[18,19],[34,35],[54,55]],south:[[7,8],[27,28],[45,46]]},
+ prison:{east:[[7,8],[29,30],[50,51]],south:[[14,15],[34,35],[51,52]]}
+};
+function frontierYard(set,fill,wallRow,wallCol,addFac,out) {
+ fill(66,5,67,9,'C');fill(72,13,73,17,'C');
+ fill(66,24,67,28,'C');fill(72,31,73,35,'C');
+ addFac(66,7,'freight','C');addFac(72,15,'freight','C');
+ wallRow(40,67,73,[[69,70]]);
+ fill(72,44,73,48,'C');fill(66,54,67,58,'M');
+ addFac(72,46,'freight','C');
+ fill(69,69,71,70,'C');addFac(69,69,'freight','C');
+ wallCol(40,66,72,[[69,70]]);
+ fill(5,67,8,68,'C');fill(21,67,24,68,'C');fill(33,71,36,72,'C');
+ addFac(6,67,'freight','C');addFac(22,67,'freight','C');
+ fill(44,67,47,68,'C');fill(56,71,59,72,'M');
+ addFac(45,67,'freight','C');
+ fill(64,3,65,61,'.');fill(1,64,62,65,'.');
+ out.supplies.push([67.5,12.5],[69.5,58.5],
+  [14.5,68.5],[47.5,70.5],[70.5,67.5]);
+ out.spawns.push([65.5,5.5],[72.5,22.5],[65.5,36.5],[72.5,52.5],
+  [9.5,66.5],[30.5,71.5],[44.5,65.5],[66.5,60.5]);
+ out.props.push(
+  {t:'pallet',x:66.6,z:11.5,dir:1},{t:'pallet',x:71.5,z:20.5,dir:0},
+  {t:'pallet',x:42.5,z:66.5,dir:0},
+  {t:'barrel',x:66.5,z:21.5},{t:'barrel',x:72.5,z:24.5},{t:'barrel',x:68.5,z:42.5},
+  {t:'cone',x:68.5,z:39.5},{t:'cone',x:69.6,z:39.5},
+  {t:'crate',x:70.5,z:42.5,s:1.0},{t:'barrier',x:10.5,z:66.6,dir:0},
+  {t:'mast',x:69.5,z:64.5},
+  {t:'puddle',x:68.3,z:30.4,w:2.4,d:1.0,color:[.075,.115,.125]},
+  {t:'puddle',x:12.2,z:69.5,w:3.0,d:.8,color:[.075,.115,.125]},
+  {t:'rails',x:68,z:68.4,len:8.4},{t:'rails',x:18,z:69.7,len:23},
+  {t:'vent',x:64.04,z:30.5,dir:1,y:2.2}
+ );
+ out.lights.push([65.5,8.5,2.9,2.4],[72.2,20.5,2.9,-2.2],[65.5,34.5,2.9,2.1],
+  [72.2,50.5,2.9,-2.4],[6.5,66.5,2.9,2.2],[30.5,70.5,2.9,2.3],
+  [44.5,66.5,2.9,2.1],[70.5,71.5,2.9,2.4]);
+ out.decor.push([66,10,7.4,.12,[.58,.50,.32]],[64.55,20,.09,18,[.47,.50,.46]],
+  [10,68.45,26,.1,[.48,.44,.30]]);
+ out.zones.push(
+  {name:'货运调度场',x0:64,y0:1,x1:73,y1:39},
+  {name:'东侧货场通道',x0:64,y0:40,x1:73,y1:62},
+  {name:'南侧编组场',x0:1,y0:64,x1:39,y1:72},
+  {name:'东南转运院',x0:40,y0:63,x1:73,y1:72});
+ out.signs.push(
+  [66,72,39.2,'货运调度场','FREIGHT DISPATCH  /  07',true,4.0],
+  [8,34,65.6,'南侧编组场','MARSHALLING YARD',true,3.9],
+  [44,60,65.6,'东南转运院','TRANSFER COURT',false,3.8]);
+ out.wallSigns.push(
+  {x:73.9,y:2.7,z:20.5,text:'货运调度场',sub:'FREIGHT DISPATCH  /  07',w:3.2,h:.8,accent:'#e9a85f'},
+  {x:20.5,y:2.5,z:64.06,text:'南侧编组场',sub:'MARSHALLING YARD',w:3.0,h:.72,accent:'#e9a85f'});
+}
+function frontierSubway(set,fill,wallRow,wallCol,addFac,out) {
+ for(const [x,y] of [[68,6],[71,10],[66,14],[70,18],[68,23],[72,27],[66,31],[70,35]]) set(x,y,'#');
+ fill(67,16,68,16,'M');fill(71,16,72,16,'M');
+ fill(66,33,67,34,'C');addFac(66,33,'cart','C');
+ wallRow(40,67,73,[[70,71]]);
+ fill(71,45,73,46,'M');fill(66,54,67,55,'C');addFac(66,54,'cart','C');
+ wallCol(40,66,72,[[69,70]]);
+ for(const [x,y] of [[8,68],[16,68],[24,68],[32,68],[48,68],[56,68]]) set(x,y,'#');
+ fill(58,67,59,68,'C');addFac(58,67,'cart','C');
+ fill(64,3,65,61,'.');fill(1,64,62,65,'.');
+ out.supplies.push([67.5,10.5],[70.5,48.5],
+  [28.5,66.5],[52.5,71.5],[70.5,66.5]);
+ out.spawns.push([65.5,8.5],[72.5,20.5],[65.5,29.5],[72.5,58.5],
+  [6.5,66.5],[35.5,71.5],[44.5,66.5],[68.5,60.5]);
+ out.props.push(
+  {t:'bench',x:69.5,z:5.5,dir:0},{t:'bench',x:66.5,z:11.5,dir:0},
+  {t:'bench',x:71.5,z:22.5,dir:0},{t:'bench',x:66.5,z:36.5,dir:0},
+  {t:'bench',x:8.5,z:66.5,dir:0},{t:'bench',x:28.5,z:66.5,dir:0},
+  {t:'bench',x:48.5,z:66.5,dir:0},{t:'bench',x:60.5,z:71.5,dir:0},
+  {t:'bin',x:66.5,z:8.5},{t:'bin',x:57.5,z:66.5},
+  {t:'vending',x:73.5,z:4.5,dir:0,color:[.28,.42,.46]},
+  {t:'vending',x:66.5,z:20.5,dir:0,color:[.46,.30,.26]},
+  {t:'pipe',x:68,z:5.86,len:9,dir:0,y:3.35,color:[.32,.38,.37]},
+  {t:'cable',x:68,z:25.5,len:9,dir:0,y:3.8},
+  {t:'puddle',x:68.4,z:30.5,w:2.4,d:.8,color:[.07,.115,.12]},
+  {t:'cone',x:67.5,z:38.5},{t:'rails',x:68,z:52.5,len:9});
+ out.lights.push([65.5,9.5,3.05,2.4],[72.2,18.5,3.05,-2.3],[65.5,30.5,3.05,2.2],
+  [72.2,44.5,3.05,-2.4],[6.5,66.5,3.05,2.2],[30.5,70.5,3.05,2.3],
+  [48.5,66.5,3.05,2.2],[68.5,71.5,3.05,2.4]);
+ out.decor.push([65,18,.1,20,[.35,.52,.55]],[2,64.6,58,.1,[.47,.56,.55]]);
+ out.zones.push(
+  {name:'地铁公共站厅',x0:64,y0:1,x1:73,y1:39},
+  {name:'东侧检修连廊',x0:64,y0:40,x1:73,y1:62},
+  {name:'南侧换乘厅',x0:1,y0:64,x1:39,y1:72},
+  {name:'东南站厅连廊',x0:40,y0:63,x1:73,y1:72});
+ out.signs.push(
+  [66,72,39.2,'公共站厅','CONCOURSE  /  L1',false,4.0],
+  [8,34,65.6,'南侧换乘厅','TRANSFER HALL',false,3.9],
+  [44,60,65.6,'东南站厅连廊','EAST CONCOURSE LINK',false,3.8]);
+ out.wallSigns.push(
+  {x:73.9,y:2.9,z:19.5,text:'公共站厅',sub:'CONCOURSE  /  L1',w:3.0,h:.75,accent:'#89e8ed'},
+  {x:20.5,y:2.5,z:64.06,text:'南侧换乘厅',sub:'TRANSFER HALL',w:3.0,h:.7,accent:'#89e8ed'});
+}
+function frontierTunnel(set,fill,wallRow,wallCol,addFac,out) {
+ fill(64,1,73,39,'#');
+ fill(68,4,69,37,'.');
+ fill(66,4,71,8,'.');
+ fill(64,6,69,7,'.');fill(64,23,69,24,'.');
+ fill(64,12,66,18,'.');fill(67,14,67,16,'.');
+ fill(71,28,73,34,'.');fill(70,29,70,33,'.');
+ fill(64,38,73,39,'.');
+ wallRow(40,64,73,[[66,67],[71,72]]);
+ fill(64,41,73,62,'#');
+ fill(66,41,67,62,'.');fill(71,41,72,62,'.');
+ fill(64,45,67,46,'.');fill(68,48,72,49,'.');fill(68,57,72,58,'.');
+ fill(70,53,70,58,'.');fill(69,53,70,55,'.');
+ fill(1,64,62,72,'#');
+ fill(1,65,62,66,'.');fill(1,70,62,71,'.');
+ fill(8,64,9,72,'.');fill(24,64,25,72,'.');
+ fill(40,64,41,72,'.');fill(55,64,56,72,'.');
+ fill(10,64,11,66,'.');fill(28,64,29,66,'.');fill(47,64,48,66,'.');
+ addFac(67,5,'pump','M');addFac(72,31,'pump','M');
+ addFac(5,65,'pump','M');addFac(45,70,'pump','M');addFac(69,54,'pump','M');
+ out.supplies.push([65.5,15.5],[66.5,44.5],
+  [5.5,66.5],[30.5,65.5],[68.5,68.5]);
+ out.spawns.push([65.5,6.5],[68.5,20.5],[72.5,33.5],[71.5,46.5],
+  [10.5,65.5],[26.5,70.5],[47.5,65.5],[64.5,68.5]);
+ out.props.push(
+  {t:'pipe',x:68.5,z:14.3,len:10,dir:1,y:2.35,color:[.29,.31,.27]},
+  {t:'pipe',x:71.5,z:50.5,len:9,dir:1,y:2.45,color:[.25,.26,.23]},
+  {t:'cable',x:68.5,z:20.5,len:12,dir:1,y:3.05},
+  {t:'valve',x:64.05,z:15.5,y:2.2},{t:'valve',x:73.95,z:30.5,y:2.2},
+  {t:'puddle',x:65.2,z:15.2,w:2.0,d:.7,color:[.055,.085,.065]},
+  {t:'puddle',x:72.0,z:32.2,w:1.8,d:.7,color:[.055,.085,.065]},
+  {t:'puddle',x:66.5,z:44.2,w:1.4,d:1.4,color:[.055,.085,.065]},
+  {t:'puddle',x:20.5,z:70.2,w:2.4,d:.6,color:[.055,.085,.065]},
+  {t:'crate',x:64.5,z:17.5,s:1.0},{t:'crate',x:69.5,z:38.5,s:1.0},
+  {t:'workbench',x:70.5,z:55.5,dir:0},{t:'locker',x:64.5,z:45.5,dir:1},
+  {t:'barrel',x:65.5,z:7.5},{t:'barrel',x:72.5,z:29.5},
+  {t:'vent',x:64.06,z:22.5,dir:1,y:2.1},{t:'vent',x:73.94,z:36.5,dir:1,y:2.1});
+ out.lights.push([66.5,6.5,2.7,2.3],[68.5,20.5,2.7,-2.0],[72.5,31.5,2.7,2.1],
+  [66.5,50.5,2.7,-2.0],[71.5,59.5,2.7,2.2],[10.5,65.5,2.7,2.2],
+  [30.5,70.5,2.7,-2.0],[50.5,65.5,2.7,2.2]);
+ out.decor.push([64.5,20,.08,30,[.42,.38,.20]],[2,65.6,58,.08,[.42,.38,.20]]);
+ out.zones.push(
+  {name:'地下综合管廊',x0:64,y0:1,x1:73,y1:39},
+  {name:'东侧管廊延伸',x0:64,y0:40,x1:73,y1:62},
+  {name:'南侧排水管廊',x0:1,y0:64,x1:39,y1:72},
+  {name:'东南泵房',x0:40,y0:63,x1:73,y1:72});
+ out.signs.push(
+  [65,72,39.2,'地下综合管廊','UTILITY GALLERY  /  B4',true,3.45],
+  [8,34,65.6,'南侧排水管廊','SOUTH GALLERY',true,3.4],
+  [44,58,65.6,'东南泵房','PUMP ANNEX',false,3.35]);
+ out.wallSigns.push(
+  {x:64.06,y:2.3,z:15.5,text:'综合管廊',sub:'UTILITY GALLERY  /  B4',w:3.0,h:.7,accent:'#e9a85f'},
+  {x:20.5,y:2.2,z:64.06,text:'排水管廊',sub:'DRAINAGE GALLERY',w:2.8,h:.66,accent:'#89e8ed'});
+}
+function frontierHospital(set,fill,wallRow,wallCol,addFac,out) {
+ fill(67,14,70,16,'#');fill(66,28,68,29,'#');
+ wallRow(40,67,73,[[70,71]]);
+ fill(72,44,73,46,'W');addFac(72,44,'bed','W');addFac(73,46,'bed','W');
+ fill(66,52,66,54,'W');addFac(66,53,'bed','W');
+ wallCol(40,66,72,[[69,70]]);
+ fill(10,68,12,68,'#');fill(24,68,26,68,'#');
+ fill(64,3,65,61,'.');fill(1,64,62,65,'.');
+ out.supplies.push([67.5,10.5],[70.5,48.5],
+  [8.5,66.5],[30.5,71.5],[70.5,67.5]);
+ out.spawns.push([64.5,6.5],[72.5,18.5],[65.5,33.5],[72.5,58.5],
+  [10.5,66.5],[36.5,70.5],[46.5,66.5],[66.5,60.5]);
+ out.props.push(
+  {t:'bench',x:66.5,z:10.5,dir:0},{t:'bench',x:71.5,z:17.5,dir:0},
+  {t:'bench',x:66.5,z:33.5,dir:0},{t:'bench',x:9.5,z:66.5,dir:0},
+  {t:'bench',x:30.5,z:66.5,dir:0},{t:'bench',x:48.5,z:66.5,dir:0},
+  {t:'wheelchair',x:69.5,z:20.5,dir:1},{t:'wheelchair',x:20.5,z:70.5,dir:1},
+  {t:'gurney',x:70.5,z:44.5,dir:1},{t:'gurney',x:67.5,z:52.5,dir:1},
+  {t:'iv',x:66.5,z:6.5},{t:'iv',x:72.5,z:10.5},{t:'iv',x:8.5,z:70.5},
+  {t:'curtain',x:72.5,z:45.7,len:2.4,dir:1,color:[.42,.56,.60]},
+  {t:'tank',x:73.5,z:32.5},{t:'tank',x:66.5,z:38.5},
+  {t:'vending',x:73.5,z:24.5,dir:0,color:[.30,.36,.44]},
+  {t:'vending',x:57.5,z:66.5,dir:0,color:[.28,.42,.46]},
+  {t:'puddle',x:69.2,z:26.4,w:2.6,d:.9,color:[.065,.105,.11]},
+  {t:'blood',x:67.8,z:34.2,w:1.2,d:.6});
+ out.lights.push([65.5,9.5,3.2,2.4],[72.2,20.5,3.2,-2.3],[65.5,33.5,3.2,2.2],
+  [72.2,47.5,3.2,-2.4],[6.5,66.5,3.1,2.3],[30.5,70.5,3.1,2.2],
+  [48.5,66.5,3.1,2.3],[69.5,71.5,3.1,2.4]);
+ out.decor.push([64.4,12,.1,24,[.62,.68,.60]],[2,64.6,58,.1,[.62,.68,.60]],
+  [24,66.45,14,.1,[.54,.62,.55]]);
+ out.zones.push(
+  {name:'医院庭院',x0:64,y0:1,x1:73,y1:39},
+  {name:'东侧留观连廊',x0:64,y0:40,x1:73,y1:62},
+  {name:'急诊等候区',x0:1,y0:64,x1:39,y1:72},
+  {name:'东南候诊连廊',x0:40,y0:63,x1:73,y1:72});
+ out.signs.push(
+  [66,72,39.2,'医院庭院','COURTYARD  /  L3',false,3.7],
+  [8,34,65.6,'急诊等候区','WAITING HALL',false,3.65],
+  [44,60,65.6,'东南候诊连廊','CLINIC LINK',true,3.6]);
+ out.wallSigns.push(
+  {x:73.9,y:2.8,z:19.5,text:'医院庭院',sub:'COURTYARD  /  L3',w:3.0,h:.75,accent:'#8df06a'},
+  {x:20.5,y:2.5,z:64.06,text:'急诊等候区',sub:'WAITING HALL',w:3.0,h:.7,accent:'#8df06a'});
+}
+function frontierPrison(set,fill,wallRow,wallCol,addFac,out) {
+ for(let y=4;y<=36;y++) set(67,y,'#');
+ for(const y of [13,14,27,28]) set(67,y,'.');
+ for(let x=68;x<=73;x++) set(x,32,'#');
+ for(const x of [70,71]) set(x,32,'.');
+ fill(72,9,73,13,'M');fill(72,22,73,26,'M');
+ addFac(69,19,'exercise','W');addFac(71,33,'exercise','W');
+ wallRow(40,67,73,[[69,70]]);
+ fill(72,48,73,50,'M');fill(66,56,67,57,'W');addFac(66,56,'exercise','W');
+ wallCol(40,66,72,[[69,70]]);
+ for(let y=66;y<=72;y++) set(20,y,'#');
+ for(const y of [68,69,71,72]) set(20,y,'.');
+ fill(6,70,9,72,'M');fill(28,67,31,68,'C');fill(46,70,49,71,'M');
+ fill(64,3,65,61,'.');fill(1,64,62,65,'.');
+ out.supplies.push([66.5,10.5],[70.5,45.5],
+  [8.5,66.5],[30.5,70.5],[69.5,67.5]);
+ out.spawns.push([65.5,5.5],[72.5,20.5],[65.5,31.5],[72.5,55.5],
+  [10.5,66.5],[36.5,71.5],[46.5,65.5],[68.5,60.5]);
+ out.props.push(
+  {t:'barrier',x:68.5,z:8.5,dir:0},{t:'barrier',x:10.5,z:67.5,dir:0},
+  {t:'pallet',x:68.5,z:16.5,dir:0},{t:'pallet',x:70.5,z:24.5,dir:0},
+  {t:'pallet',x:42.5,z:67.5,dir:0},
+  {t:'barrel',x:68.5,z:21.5},{t:'barrel',x:72.5,z:29.5},{t:'barrel',x:66.5,z:58.5},
+  {t:'locker',x:66.5,z:44.5,dir:1},{t:'washing',x:72.5,z:52.5,dir:1},
+  {t:'workbench',x:70.5,z:57.5,dir:0},
+  {t:'mast',x:65.5,z:34.5},{t:'mast',x:71.5,z:64.5},
+  {t:'cone',x:66.5,z:26.5},
+  {t:'puddle',x:68.4,z:44.5,w:2.8,d:.8,color:[.055,.085,.105]},
+  {t:'puddle',x:24.5,z:67.2,w:2.2,d:.7,color:[.055,.085,.105]});
+ out.lights.push([65.5,8.5,3.2,2.4],[72.2,20.5,3.2,-2.3],[65.5,34.5,3.2,2.2],
+  [72.2,47.5,3.2,-2.4],[6.5,66.5,3.1,2.3],[30.5,70.5,3.1,2.2],
+  [48.5,66.5,3.1,2.3],[69.5,71.5,3.1,2.4]);
+ out.decor.push([64.4,10,.1,26,[.52,.46,.28]],[2,64.6,58,.1,[.52,.46,.28]],
+  [22,66.4,16,.1,[.46,.42,.28]]);
+ out.zones.push(
+  {name:'监狱后勤院',x0:64,y0:1,x1:73,y1:39},
+  {name:'东南巡道',x0:64,y0:40,x1:73,y1:62},
+  {name:'南侧装卸院',x0:1,y0:64,x1:39,y1:72},
+  {name:'东南后勤连廊',x0:40,y0:63,x1:73,y1:72});
+ out.signs.push(
+  [66,72,39.2,'监狱后勤院','LOGISTICS YARD  /  D',true,4.0],
+  [8,34,65.6,'南侧装卸院','LOADING COURT',true,3.9],
+  [44,60,65.6,'东南后勤连廊','SERVICE LINK',false,3.8]);
+ out.wallSigns.push(
+  {x:73.9,y:2.8,z:19.5,text:'监狱后勤院',sub:'LOGISTICS YARD  /  D',w:3.0,h:.75,accent:'#e9a85f'},
+  {x:20.5,y:2.5,z:64.06,text:'南侧装卸院',sub:'LOADING COURT',w:3.0,h:.7,accent:'#e9a85f'});
+}
+function buildFrontier(def,id) {
+ const style=def.theme.style,gates=FRONTIER_GATES[id]||FRONTIER_GATES.yard;
+ const OLD=def.rows.length,cols=OLD+12,rows=cols;
+ const g=def.rows.map(row=>row.split(''));
+ const facilities=[];
+ for(let y=0;y<OLD;y++) for(let x=0;x<OLD;x++) {
+  const kind=def.facilities.get(y*OLD+x);
+  if(kind) facilities.push([x,y,kind]);
+ }
+ for(const row of g) while(row.length<cols) row.push('#');
+ while(g.length<rows) g.push(Array.from({length:cols},()=>'#'));
+ const set=(x,y,ch)=>{if(x>0&&y>0&&x<cols-1&&y<rows-1) g[y][x]=ch;};
+ const fill=(x0,y0,x1,y1,ch='.')=>{for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++) set(x,y,ch);};
+ const wallRow=(y,x0,x1,doors=[])=>{for(let x=x0;x<=x1;x++) set(x,y,'#');for(const [a,b] of doors) for(let x=a;x<=b;x++) set(x,y,'.');};
+ const wallCol=(x,y0,y1,doors=[])=>{for(let y=y0;y<=y1;y++) set(x,y,'#');for(const [a,b] of doors) for(let y=a;y<=b;y++) set(x,y,'.');};
+ const addFac=(x,y,kind,tile)=>{set(x,y,tile);facilities.push([x,y,kind]);};
+ const out={supplies:[],spawns:[],props:[],lights:[],decor:[],zones:[],signs:[],wallSigns:[]};
+ // 新区雏形：东、南两翼与东南角，旧外墙保留为内立面
+ fill(64,1,73,62,'.');fill(1,64,62,72,'.');fill(63,63,73,72,'.');
+ for(const [a,b] of gates.east) for(let y=a;y<=b;y++) {set(62,y,'.');set(63,y,'.');}
+ for(const [a,b] of gates.south) for(let x=a;x<=b;x++) {set(x,62,'.');set(x,63,'.');}
+ if(style==='yard') frontierYard(set,fill,wallRow,wallCol,addFac,out);
+ else if(style==='subway') frontierSubway(set,fill,wallRow,wallCol,addFac,out);
+ else if(style==='tunnel') frontierTunnel(set,fill,wallRow,wallCol,addFac,out);
+ else if(style==='hospital') frontierHospital(set,fill,wallRow,wallCol,addFac,out);
+ else if(style==='prison') frontierPrison(set,fill,wallRow,wallCol,addFac,out);
+ // 外边界闭合
+ for(let y=0;y<rows;y++) {g[y][0]='#';g[y][cols-1]='#';}
+ for(let x=0;x<cols;x++) {g[0][x]='#';g[rows-1][x]='#';}
+ // 新增点若被装饰块覆盖，就近落到可走格，避免出生/补给落在实体里
+ const walkable=(x,y)=>g[y]&&g[y][x]==='.';
+ const relocate=([x,y])=>{
+  if(walkable(Math.floor(x),Math.floor(y))) return [x,y];
+  for(let r=1;r<=5;r++) for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++) {
+   const nx=Math.floor(x)+dx,ny=Math.floor(y)+dy;
+   if(nx>0&&ny>0&&nx<cols-1&&ny<rows-1&&walkable(nx,ny)) return [nx+.5,ny+.5];
+  }
+  return [x,y];
+ };
+ out.supplies=out.supplies.map(relocate);out.spawns=out.spawns.map(relocate);
+ def.rows=g.map(row=>row.join(''));
+ def.supplies.push(...out.supplies);
+ def.spawnPoints.push(...out.spawns);
+ def.props.push(...out.props);
+ def.lights.push(...out.lights);
+ def.decor.push(...out.decor);
+ def.zones.push(...out.zones);
+ def.signs.push(...out.signs);
+ def.wallSigns.push(...out.wallSigns);
+ def.facilities=new Map(facilities.map(([x,y,kind])=>[y*cols+x,kind]));
+ def.expanded={oldCols:OLD,oldRows:OLD,cols,rows};
+}
 function buildMapHeights(def) {
  const cols=def.rows[0].length,rows=def.rows.length;
  const heights=new Float32Array(cols*rows);
@@ -705,6 +1003,7 @@ function buildMapHeights(def) {
 }
 buildMezzanine(MAPS.hospital,'hospital');
 buildMezzanine(MAPS.subway,'subway');
+for(const id of Object.keys(MAPS)) buildFrontier(MAPS[id],id);
 for(const id of Object.keys(MAPS)) buildMapHeights(MAPS[id]);
 
 
@@ -792,34 +1091,43 @@ function defaultArmory(){
  const weapons={};for(const def of WEAPONS) weapons[def.id]=makeWeaponState();
  return {credits:0,owned:['rifle','pistol'],weapons,equipment:{grenades:0,grenadeDamage:0,armor:0}};
 }
-function loadArmory(){
+function parseArmory(raw){
  let data=null;
- try {data=JSON.parse(read(SAVE_KEY,'')||'null');} catch {}
- if(!data||typeof data!=='object') return defaultArmory();
+ try {data=JSON.parse(raw||'null');} catch {return null;}
+ if(!data||typeof data!=='object'||Array.isArray(data)) return null;
  const base=defaultArmory();
- const owned=Array.isArray(data.owned)?data.owned.filter(id=>WEAPON_BY_ID[id]):base.owned.slice();
+ const owns=(object,key)=>Object.prototype.hasOwnProperty.call(object,key);
+ const owned=Array.isArray(data.owned)
+  ?data.owned.filter(id=>typeof id==='string'&&owns(WEAPON_BY_ID,id))
+  :base.owned.slice();
  if(!owned.includes('rifle')) owned.unshift('rifle');
  if(!owned.includes('pistol')) owned.push('pistol');
  const weapons={};
  for(const def of WEAPONS){
-  const src=data.weapons&&data.weapons[def.id]||{};
+  const src=data.weapons&&typeof data.weapons==='object'&&data.weapons[def.id]||{};
   const st=makeWeaponState();
   for(const key of Object.keys(UPGRADE_DEFS))
    st.upgrades[key]=Math.min(UPGRADE_DEFS[key].max,Math.max(0,Number(src.upgrades&&src.upgrades[key])||0));
-  st.skins=Array.isArray(src.skins)?src.skins.filter(key=>SKINS[key]):['default'];
+  st.skins=Array.isArray(src.skins)
+   ?src.skins.filter(key=>typeof key==='string'&&owns(SKINS,key))
+   :['default'];
   if(!st.skins.includes('default')) st.skins.unshift('default');
-  st.skin=SKINS[src.skin]?src.skin:'default';
+  st.skin=typeof src.skin==='string'&&owns(SKINS,src.skin)?src.skin:'default';
   if(!st.skins.includes(st.skin)) st.skin='default';
   weapons[def.id]=st;
  }
  const equipment={};
  for(const key of Object.keys(EQUIPMENT_DEFS))
   equipment[key]=Math.min(EQUIPMENT_DEFS[key].max,Math.max(0,Number(data.equipment&&data.equipment[key])||0));
- return {credits:Math.max(0,Number(data.credits)||0),owned,weapons,equipment};
+ const credits=Number(data.credits);
+ return {credits:Number.isFinite(credits)?Math.max(0,credits):0,owned,weapons,equipment};
+}
+function loadArmory(){
+ return parseArmory(read(SAVE_KEY,''))||defaultArmory();
 }
 const armory=loadArmory();
 let credits=armory.credits,runCredits=0,shopWeapon='rifle';
-function saveArmory(){try {localStorage.setItem(SAVE_KEY,JSON.stringify(armory));} catch {}}
+function saveArmory(){save(SAVE_KEY,JSON.stringify(armory));}
 function ownedWeapons(){return WEAPONS.filter(w=>armory.owned.includes(w.id));}
 function ensureWeaponState(id){if(!armory.weapons[id]) armory.weapons[id]=makeWeaponState();}
 function upgradesOf(id){ensureWeaponState(id);return armory.weapons[id].upgrades;}

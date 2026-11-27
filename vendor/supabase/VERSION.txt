@@ -1,0 +1,2 @@
+Supabase JS 2.119.2 · official npm package
+sha512-4HvF4G2DwdqjmwPBpz9RHnXWfdK0wSkw4yBhxe64CdeF8gdxsTF9WZuHFuNWtQnHllq71ZDyAghr4Q8nC0m/NA==

@@ -477,7 +477,7 @@ function makeViewPassV2(gl,program,playerLight) {
  attribute float aSurface,aPart;
  uniform vec2 uScale;
  uniform vec3 uRest;
- uniform float uSway,uBob,uKick,uLoad,uMag,uSupport,uSlide,uSwitch,uFirePulse,uTime;
+ uniform float uSway,uBob,uKick,uLoad,uMag,uSupport,uSlide,uSwitch,uFirePulse,uTime,uIdle;
  varying vec3 vLocal,vNormal;
  varying float vSurface,vPart;
  void main() {
@@ -489,13 +489,17 @@ function makeViewPassV2(gl,program,playerLight) {
   } else if(aPart>2.5) {
    p.z-=uSlide*.046;p.y+=uSlide*.004;
   }
-  float roll=-uLoad*.34+uSway*.30+uSwitch*.23-uFirePulse*.014+sin(uTime*1.1)*.0022;
+  float sw=uSwitch*uSwitch*(3.-2.*uSwitch);
+  float idleW=uIdle;
+  float roll=-uLoad*.34+uSway*.30+sw*.20-uFirePulse*.014+sin(uTime*1.1)*.0022
+   +idleW*(sin(uTime*.63)*.0028+sin(uTime*1.37+1.3)*.0015);
   mat2 turn=mat2(cos(roll),sin(roll),-sin(roll),cos(roll));
   p.xy=turn*p.xy;
   p.x-=p.z*.165;
-  p.x+=uSway+uSwitch*.032+sin(uTime*.91)*.0014;
-  p.y+=p.z*(.04+uKick*.30)+uBob+uKick*.072-uLoad*.058-uSwitch*.220;
-  p.z-=uKick*.62+uSwitch*.120;
+  p.x+=uSway+sw*.030+idleW*(sin(uTime*.47+2.1)*.0020+sin(uTime*.19)*.0014);
+  p.y+=p.z*(.04+uKick*.30-sw*.018)+uBob+uKick*.072-uLoad*.058-sw*.190
+   +idleW*(sin(uTime*.53)*.0018);
+  p.z-=uKick*.62+sw*.110;
   p+=uRest;
   p.z=max(p.z,.12);
   vec3 n=aShadeNormal;n.xy=turn*n.xy;
@@ -551,9 +555,9 @@ function makeViewPassV2(gl,program,playerLight) {
  }`);
  const p=shader.p;
  const attributes=['aPoint','aShadeNormal','aSurface','aPart'].map(name=>gl.getAttribLocation(p,name));
- const u=Object.fromEntries(['uScale','uRest','uSway','uBob','uKick','uLoad','uMag','uSupport','uSlide','uSwitch','uFirePulse','uTime','uBody','uMetal','uAccent','uEnvironment','uPlayerLight','uFire'].map(name=>[name,gl.getUniformLocation(p,name)]));
+ const u=Object.fromEntries(['uScale','uRest','uSway','uBob','uKick','uLoad','uMag','uSupport','uSlide','uSwitch','uFirePulse','uTime','uIdle','uBody','uMetal','uAccent','uEnvironment','uPlayerLight','uFire'].map(name=>[name,gl.getUniformLocation(p,name)]));
  const buffers=new Map(),rgb=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255);
- const SWITCH=.34;
+ const SWITCH=.40;
  let lastNow=performance.now()/1000,lastKind=null,lastMuzzle=0,switchT=0,firePulse=0;
  let moveBlend=0,runBlend=0,aimBlend=0;
  function windowed(v,a,b,c,d) {
@@ -580,7 +584,7 @@ function makeViewPassV2(gl,program,playerLight) {
   if(justSwitched) switchT=SWITCH;
   lastKind=item.kind;
   if(!justSwitched) switchT=Math.max(0,switchT-dt);
-  const swap=justSwitched?1:switchT/SWITCH,swapE=swap*swap;
+  const swap=justSwitched?1:switchT/SWITCH;
   if(muzzle>lastMuzzle+.003) firePulse=1;
   lastMuzzle=muzzle;
   firePulse=Math.max(0,firePulse-dt*13);
@@ -592,6 +596,7 @@ function makeViewPassV2(gl,program,playerLight) {
   const stability=1-aimBlend*.58;
   const breathe=Math.sin(now*1.24)*.62+Math.sin(now*.41+1.8)*.38;
   const idle=1-moveBlend*.72;
+  const idleW=(1-moveBlend*.85)*(1-aimBlend*.55);
   const sway=(Math.sin(step*.5)*.014*moveBlend+Math.sin(now*.58)*.0034*idle+Math.sin(step)*.006*runBlend)*stability;
   const bob=(Math.cos(step*2)*.012*moveBlend+breathe*.0034*idle+Math.sin(step*2)*.008*runBlend)*stability;
   const loadProgress=reloadTime>0?clamp(1-reloadTime/item.reload,0,1):0;
@@ -611,9 +616,10 @@ function makeViewPassV2(gl,program,playerLight) {
   gl.uniform1f(u.uMag,magDrop);
   gl.uniform1f(u.uSupport,support);
   gl.uniform1f(u.uSlide,slide);
-  gl.uniform1f(u.uSwitch,swapE);
+  gl.uniform1f(u.uSwitch,swap);
   gl.uniform1f(u.uFirePulse,firePulse);
   gl.uniform1f(u.uTime,now);
+  gl.uniform1f(u.uIdle,idleW);
   gl.uniform3fv(u.uBody,rgb(skin.body));gl.uniform3fv(u.uMetal,rgb(skin.metal));gl.uniform3fv(u.uAccent,rgb(skin.accent));
   gl.uniform3fv(u.uEnvironment,MAP.theme.ambient);gl.uniform3fv(u.uPlayerLight,playerLight);
   gl.uniform1f(u.uFire,Math.min(1,muzzle/.057));
@@ -655,22 +661,34 @@ function makeYardRenderer() {
  uniform vec4 uLights[12];
  uniform vec3 uFog,uAmbient;
  vec3 illum(vec3 p,vec3 n) {
-   vec3 ambient=uAmbient+max(0.,dot(n,normalize(vec3(-.4,.8,-.25))))*vec3(.14,.18,.19);
+   float up=clamp(n.y*.5+.5,0.,1.);
+   vec3 ambient=uAmbient*(.94+.07*up)+max(0.,dot(n,normalize(vec3(-.4,.8,-.25))))*vec3(.13,.17,.185);
+   /* Warm bounce from the wet ground and a cool fill on vertical faces keep
+      near walls from reading as flat grey in the fog. */
+   ambient+=vec3(.050,.045,.034)*max(0.,dot(n,vec3(0.,-1.,0.)));
+   ambient+=vec3(.020,.030,.038)*(1.-up);
    for(int i=0;i<12;i++) {
      vec4 l=uLights[i];
      vec3 d=vec3(l.x,l.z,l.y)-p;
      float d2=dot(d,d);
      float facing=max(.23,dot(n,normalize(d)));
      float power=abs(l.w)*facing/(.94+d2*.40);
-     ambient+=power*(l.w>0.?vec3(1.63,.72,.29):vec3(.29,1.03,1.30));
+     vec3 lightColor=l.w>0.?vec3(1.63,.72,.29):vec3(.29,1.03,1.30);
+     float prox=1./(1.+d2*.10);
+     lightColor=mix(lightColor,lightColor*vec3(1.05,1.0,.92),prox*.55);
+     ambient+=power*lightColor;
    }
    float closeDist=distance(p.xz,uCamera);
    return ambient+uFlash*vec3(2.4,1.08,.36)/(1.+closeDist*closeDist*.78);
  }
  vec3 fog(vec3 finalColor,vec3 p) {
    float d=distance(p.xz,uCamera);
-   float fade=1.-exp(-d*(.024+.016*exp(-p.y*.38)));
-   return mix(finalColor,uFog,fade*.87);
+   float mist=exp(-max(0.,p.y)*.34);
+   float fade=1.-exp(-d*(.021+.017*mist));
+   float aerial=smoothstep(7.,30.,d);
+   float lum=dot(finalColor,vec3(.24,.64,.12));
+   finalColor=mix(finalColor,vec3(lum)*vec3(.95,1.0,1.025),aerial*.14);
+   return mix(finalColor,uFog,clamp(fade*.90,0.,.93));
  }`;
  const sceneFragment=`precision highp float;
  varying vec3 vPosition,vNormal,vColor;
@@ -758,7 +776,7 @@ function makeYardRenderer() {
  void main() {
    vec4 tex=texture2D(uTexture,vUv);
    if(uType>2.5) {gl_FragColor=tex;return;}
-   if(tex.a<.43) discard;
+   if(tex.a<.38) discard;
    vec3 light=illum(vPosition,vec3(-uForward.x,.22,-uForward.y));
    vec3 c=tex.rgb*(uType>1.5?vec3(1.10):light+vec3(.10,.07,.05));
    if(uType<.5 && tex.r>.77 && tex.g>.47 && tex.b<.54) c=mix(c,vec3(1.,.65,.24),.32);
@@ -1376,11 +1394,12 @@ function makeYardRenderer() {
  }
  rebuild();
  const spriteBuffer=gl.createBuffer(), textures=new WeakMap();
- const shadowImage=document.createElement('canvas');shadowImage.width=shadowImage.height=48;
+ const shadowImage=document.createElement('canvas');shadowImage.width=shadowImage.height=64;
  const shadowCtx=shadowImage.getContext('2d');
- const shadowGradient=shadowCtx.createRadialGradient(24,24,2,24,24,23.5);
- shadowGradient.addColorStop(0,'rgba(4,7,8,.70)');shadowGradient.addColorStop(.39,'rgba(4,7,8,.48)');shadowGradient.addColorStop(1,'rgba(4,7,8,0)');
- shadowCtx.fillStyle=shadowGradient;shadowCtx.fillRect(0,0,48,48);
+ const shadowGradient=shadowCtx.createRadialGradient(32,32,2,32,32,31.5);
+ shadowGradient.addColorStop(0,'rgba(4,7,8,.56)');shadowGradient.addColorStop(.30,'rgba(4,7,8,.37)');
+ shadowGradient.addColorStop(.62,'rgba(4,7,8,.12)');shadowGradient.addColorStop(1,'rgba(4,7,8,0)');
+ shadowCtx.fillStyle=shadowGradient;shadowCtx.fillRect(0,0,64,64);
  const modelExt=gl.getExtension('ANGLE_instanced_arrays');
  let modelProgram=null;
  if(modelExt) {
@@ -1532,9 +1551,20 @@ function makeYardRenderer() {
   gl.uniform1f(spritesProgram.uniforms.uType,3);
   gl.bindTexture(gl.TEXTURE_2D,imageTexture(shadowImage));
   gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
+  const buffer=new Float32Array(30);
   for(const item of items) {
-   const x=item.x,z=item.y,r=item.actor.type==='brute'?.41:.34,ground=floorAt(item.x,item.y)+.012;
-   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([x-r,ground,z-r,0,0,x+r,ground,z-r,1,0,x+r,ground,z+r,1,1,x-r,ground,z-r,0,0,x+r,ground,z+r,1,1,x-r,ground,z+r,0,1]),gl.DYNAMIC_DRAW);
+   const a=item.actor||{},x=item.x,z=item.y,ground=floorAt(item.x,item.y)+.011;
+   const heavy=a.type==='brute'||a.type==='boss',dead=!!a.dead,down=!!a.downed;
+   const yaw=Number.isFinite(a.yaw)?a.yaw:0;
+   const fx=Math.cos(yaw),fz=Math.sin(yaw),rx=-fz,rz=fx;
+   const r=heavy?.44:.34,fwd=r*(dead?1.7:down?1.25:1.18),side=r*(dead?1.15:.92);
+   const ax=x-rx*side-fx*fwd,az=z-rz*side-fz*fwd;
+   const bx=x+rx*side-fx*fwd,bz=z+rz*side-fz*fwd;
+   const cx=x+rx*side+fx*fwd,cz=z+rz*side+fz*fwd;
+   const dx=x-rx*side+fx*fwd,dz=z-rz*side+fz*fwd;
+   buffer.set([ax,ground,az,0,0, bx,ground,bz,1,0, cx,ground,cz,1,1,
+    ax,ground,az,0,0, cx,ground,cz,1,1, dx,ground,dz,0,1]);
+   gl.bufferData(gl.ARRAY_BUFFER,buffer,gl.DYNAMIC_DRAW);
    gl.drawArrays(gl.TRIANGLES,0,6);
   }
   gl.depthMask(true);gl.disable(gl.BLEND);
@@ -1608,7 +1638,6 @@ function makeYardRenderer() {
    const wide=item.height*item.img.width/item.img.height;
    billboard(item.img,item.x,item.base??0,item.y,wide,item.height,-dy,dx,item.kind);
   }
-  groundShadows(modelItems);
   spr.forEach(index=>gl.disableVertexAttribArray(index));
   let characterClaims=null;
   const characterModels=window.DawnwatchCharacters;
@@ -1624,6 +1653,18 @@ function makeYardRenderer() {
   if(characterClaims&&characterClaims.size)for(const item of modelItems) {
    if(characterClaims.has(item.actor)&&['shield','bomber'].includes(item.actor.type))fallback.push({...item,accessory:item.actor.type});
   }
+  /* Claiming can create the Three renderer on the first frame; restore the raw
+     sprite pass before drawing the remaining fallback contact shadows. Claimed
+     actors get a soft 3D ellipse from the character scene instead, so a body
+     never receives two stacked shadows. */
+  gl.viewport(0,0,W.width,W.height);
+  gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.disable(gl.CULL_FACE);
+  gl.activeTexture(gl.TEXTURE0);
+  sceneUniforms(spritesProgram,view,dx,dy,look);
+  gl.bindBuffer(gl.ARRAY_BUFFER,spriteBuffer);
+  const shadowAttribs=[bind(spritesProgram,'aPosition',3,20,0),bind(spritesProgram,'aUv',2,20,12)];
+  groundShadows(characterClaims&&characterClaims.size?fallback.filter(item=>!characterClaims.has(item.actor)):modelItems);
+  shadowAttribs.forEach(index=>gl.disableVertexAttribArray(index));
   drawModels(view,dx,dy,look,fallback);
   if(characterClaims&&characterClaims.size&&characterModels.render) {
    try {characterModels.render();} catch(error) {
