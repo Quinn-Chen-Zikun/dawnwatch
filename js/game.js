@@ -472,12 +472,16 @@ function updateDialogue(dt) {
 }
 function spawnSquad() {
  story.squadTrail={x:player.x,y:player.y,angle:player.angle,revision:0};
+ story.playerMotion={x:player.x,y:player.y,speed:0,still:0};
  npcs=[];
  for(const [index,squad] of STORY_SQUAD.entries()) {
-  const n={friendly:true,type:'walker',kind:{height:squad.height},squad,
+  const n={friendly:true,type:'walker',kind:{height:squad.height},squad,squadIndex:index,
    x:player.x,y:player.y,yaw:player.angle,anim:Math.random()*6,flash:0,
    hp:120,maxHp:120,downed:false,downT:0,downDir:0,revive:0,
    fireCd:.7+Math.random()*.9,hurtCd:0,barkCd:16+Math.random()*10,muzzle:0,
+   sceneCd:9+index*5,yieldPoint:null,yieldCooldown:0,
+   yieldSafeAt:{x:player.x,y:player.y},
+   intent:npcNewIntent(index,squad.id),
    sideBias:index===1?-1:1,formationRevision:-1};
   const point=npcAnchor(n,story.squadTrail,true);
   if(point) {n.x=point.x;n.y=point.y;n.anchor=point;n.formationRevision=0;}
@@ -605,6 +609,7 @@ function updateStory(dt) {
 }
 function downNpc(n) {
  n.downed=true;n.downT=0;n.downDir=n.yaw+Math.PI;n.revive=0;n.hp=0;
+ n.yieldPoint=null;npcSuspendDaily(n);
  say(n.squad.id,'我……撑不住了……',3.6);
  setNotice(n.squad.name+' 倒地 · 靠近即可救援',2.4);
  tone(96,.32,'sawtooth',.1,40);
@@ -673,7 +678,11 @@ function npcAnchor(n,t,spawning=false) {
   const [f,l]=options[i],x=base.x+c*f-s*l,y=base.y+s*f+c*l;
   if(!npcFreePoint(x,y)||Math.hypot(x-player.x,y-player.y)<1.65) continue;
   if(npcs.some(other=>other!==n&&!other.downed&&
-    Math.hypot(x-(other.anchor||other).x,y-(other.anchor||other).y)<.95)) continue;
+    (Math.hypot(x-(other.anchor||other).x,y-(other.anchor||other).y)<.95||
+     Math.hypot(x-other.x,y-other.y)<.95))) continue;
+  if(npcs.some(other=>other!==n&&other.intent&&other.intent.goal&&
+    (other.intent.phase==='travel'||other.intent.phase==='dwell')&&
+    Math.hypot(x-other.intent.goal.x,y-other.intent.goal.y)<.85)) continue;
   if(spawning&&npcs.some(other=>Math.hypot(x-other.x,y-other.y)<1.0)) continue;
   const direct=walkableLine(spawning?player.x:n.x,spawning?player.y:n.y,x,y,.21);
   // Initial positions should be actually reachable from spawn, not through walls.
@@ -694,10 +703,25 @@ function npcAnchor(n,t,spawning=false) {
 }
 function npcMove(n,dx,dy) {
  const x=n.x,y=n.y,oldDist=Math.hypot(x-player.x,y-player.y);
+ const safe=()=>{
+  const newDist=Math.hypot(n.x-player.x,n.y-player.y);
+  if(newDist<.92&&newDist<oldDist-.0001) return false;
+  for(const o of npcs) {
+   if(o===n||o.downed) continue;
+   const before=Math.hypot(x-o.x,y-o.y),after=Math.hypot(n.x-o.x,n.y-o.y);
+   if(after<.66&&after<before-.0001) return false;
+  }
+  return true;
+ };
  move(n,dx,dy,.21);
- const newDist=Math.hypot(n.x-player.x,n.y-player.y);
- // The player remains freely movable; companions yield instead of moving into the player.
- if(newDist<.92&&newDist<oldDist-.0001) {n.x=x;n.y=y;}
+ if(!safe()) {
+  n.x=x;n.y=y;
+  // Try one free sliding axis, never push another actor or the player.
+  if(Math.abs(dx)>.0001&&Math.abs(dy)>.0001) {
+   const axes=Math.abs(dx)>=Math.abs(dy)?[[dx,0],[0,dy]]:[[0,dy],[dx,0]];
+   for(const [ax,ay] of axes){move(n,ax,ay,.21);if(safe()&&Math.hypot(n.x-x,n.y-y)>.0001)break;n.x=x;n.y=y;}
+  }
+ }
  return Math.hypot(n.x-x,n.y-y);
 }
 function npcStep(n,tx,ty,speed,dt,stop=.45) {
@@ -740,14 +764,378 @@ function npcYieldPoint(n) {
   const near=Math.hypot(n.x+vx*k-p.x,n.y+vy*k-p.y);
   if(near<Math.min(.94,d)-.025) continue;
   if(npcs.some(o=>o!==n&&!o.downed&&Math.hypot(o.x-x,o.y-y)<.82)) continue;
+  // Do not park a yielding companion on another companion's reserved daily goal.
+  if(npcs.some(o=>o!==n&&o.intent&&o.intent.goal&&
+    (o.intent.phase==='travel'||o.intent.phase==='dwell')&&
+    Math.hypot(o.intent.goal.x-x,o.intent.goal.y-y)<.88)) continue;
   return {x,y,fromX:p.x,fromY:p.y,side,parkAhead:f>1.1&&Math.abs(l)<1.3};
  }
  return null;
 }
-function npcFace(n,angle,dt) {
+function npcFace(n,angle,dt,rate=5.8) {
  const before=n.yaw??angle;
  const delta=Math.atan2(Math.sin(angle-before),Math.cos(angle-before));
- n.yaw=before+clamp(delta,-5.8*dt,5.8*dt);
+ n.yaw=before+clamp(delta,-rate*dt,rate*dt);
+}
+// Everyday companion autonomy. This only decides non-combat activities: where to
+// stand, what to look at and when to rest/talk. Combat, rescue and healing priorities
+// below remain untouched and always pre-empt these tasks.
+const NPC_DAILY_MAX_MOVERS=2;
+const NPC_DAILY_KINDS={inspect:'查看',observe:'观察',rest:'休息',care:'照看',chat:'交谈',
+ follow:'跟随',regroup:'集合',rescue:'救援',combat:'警戒'};
+const NPC_DAILY_PROP_LABELS={vent:'通风口',workbench:'工作台',locker:'储物柜',vending:'自动售货机',
+ valve:'阀门',pipe:'管线',cable:'线缆',door:'门禁',mast:'灯杆',monitor:'监视器',tank:'储罐',
+ bench:'长椅',gurney:'担架',iv:'输液架',curtain:'隔帘',bin:'垃圾桶',hoop:'篮筐',barrier:'路障',
+ pallet:'货盘',cone:'路锥',rails:'铁轨',crate:'货箱',barrel:'油桶',court:'场地标线',washing:'洗衣台'};
+const NPC_DAILY_PROFILES={
+ qin:{radius:7.4,speed:1.65,dwell:[6,10],wait:[3.5,6.5],fixedKind:'observe',prefer:2.6,
+  types:{vent:3.2,workbench:3.1,locker:2.7,vending:2.9,valve:2.5,pipe:2.2,cable:1.9,
+   door:2.1,mast:2.1,monitor:2.6,tank:2.0,bin:1.4,rails:1.7,sign:3.0,
+   pallet:1.6,crate:1.4,barrel:1.3,cone:1.1}},
+ lin:{radius:6.6,speed:1.45,dwell:[8,12],wait:[4,7],fixedKind:'rest',prefer:3.0,
+  types:{bench:3.4,gurney:2.9,iv:2.7,curtain:2.1,tank:1.9,locker:1.8,
+   workbench:1.7,vending:1.9,bin:1.2,sign:1.3,pallet:1.4,barrier:1.2}},
+ qi:{radius:8.6,speed:1.95,dwell:[4.5,7.5],wait:[3,5.5],fixedKind:'observe',prefer:4.6,
+  types:{door:2.1,vent:2.4,pipe:1.9,cable:1.8,mast:2.1,hoop:2.0,barrier:1.8,
+   pallet:1.6,cone:1.8,rails:2.0,workbench:1.8,sign:2.3,valve:2.0,monitor:2.2,tank:1.8}}
+};
+const NPC_DAILY_LINES={
+ qin:{inspect:['这处接口还没锈死。','标牌上的编号对得上。','以前这里应该有人值守。'],
+  observe:['风向变了，雨小了一点。','这边比刚才安静。']},
+ lin:{rest:['我在这儿缓一下。','还有半卷绷带，够用。','你们先别走太远。'],
+  care:['你那边还撑得住吗？','别硬扛，累了就说。','我在这儿看着，你歇口气。'],
+  chat:['刚才那阵跑得有点急。','水壶还在，谁要喝？']},
+ qi:{observe:['那边好像有条岔路。','我去前面看一眼就回来。','这地方以前是做什么的？'],
+  inspect:['这扇门后面是通的。','这根线还带电。']}
+};
+function npcProfile(n) {
+ return NPC_DAILY_PROFILES[n.squad.id]||NPC_DAILY_PROFILES.qin;
+}
+// n.intent is a plain public object (kind/phase/goal/time/label) for inspection;
+// the state machine only mutates it, it never replaces the object reference.
+function npcNewIntent(index,id) {
+ const profile=NPC_DAILY_PROFILES[id]||NPC_DAILY_PROFILES.qin;
+ return {kind:'follow',phase:'follow',goal:null,look:null,
+  time:2.2+index*2.7+Math.random()*1.2,duration:0,dwell:profile.dwell[0],
+  stuck:0,playerX:player.x,playerY:player.y,speed:profile.speed,label:'跟随',yielding:false,index};
+}
+function npcIntentLabel(n) {
+ if(!n) return '在队';
+ if(n.yieldPoint) return '让路';
+ const i=n.intent;
+ if(!i) return '在队';
+ if(i.phase==='wait'||i.phase==='settled') return '停留';
+ return NPC_DAILY_KINDS[i.kind]||'在队';
+}
+function npcPriorityIntent(n,kind,goal=null) {
+ const i=n.intent;
+ if(!i) return;
+ i.kind=kind;i.phase='priority';i.time=0;i.stuck=0;i.look=null;
+ i.goal=goal?{x:goal.x,y:goal.y,look:null,label:goal.label||''}:null;
+ i.label=npcIntentLabel(n);
+}
+function npcSuspendDaily(n) {
+ const i=n.intent;
+ if(!i) return;
+ if(i.phase==='follow'&&i.kind==='follow') return;
+ i.kind='follow';i.phase='follow';i.goal=null;i.look=null;i.stuck=0;
+ i.time=2.0+(n.squadIndex||0)*.6+Math.random()*1.2;
+ i.label='跟随';
+}
+function npcAbortDaily(n) {
+ const i=n.intent,profile=npcProfile(n);
+ if(!i) return;
+ i.phase='wait';i.kind=profile.fixedKind;i.goal=null;i.look=null;i.stuck=0;
+ i.time=profile.wait[0]+Math.random()*(profile.wait[1]-profile.wait[0]);
+ i.label='停留';
+}
+function npcTrackPlayer(dt) {
+ const m=story.playerMotion||(story.playerMotion={x:player.x,y:player.y,speed:0,still:0});
+ const d=Math.hypot(player.x-m.x,player.y-m.y);
+ const speed=Math.min(12,d/Math.max(dt,.0001));
+ m.speed+=(speed-m.speed)*(1-Math.exp(-dt*8));
+ if(d<.006) m.still+=dt; else m.still=0;
+ if(d>.0005) {m.x=player.x;m.y=player.y;}
+ return m;
+}
+function npcInPlayerFront(x,y,near=3.0,lateralLimit=1.05) {
+ const dx=x-player.x,dy=y-player.y;
+ const forward=dx*Math.cos(player.angle)+dy*Math.sin(player.angle);
+ const lateral=Math.abs(-dx*Math.sin(player.angle)+dy*Math.cos(player.angle));
+ return forward>.22&&forward<near+.35&&lateral<lateralLimit;
+}
+function npcPathAvoidsPlayer(n,tx,ty) {
+ const dx=tx-n.x,dy=ty-n.y,length=Math.hypot(dx,dy);
+ if(length<.001) return true;
+ const startDistance=Math.hypot(n.x-player.x,n.y-player.y);
+ const minAllowed=Math.min(2.4,Math.max(.95,startDistance-.03));
+ const steps=Math.max(2,Math.ceil(length/.22));
+ for(let i=1;i<=steps;i++) {
+  const t=i/steps,x=n.x+dx*t,y=n.y+dy*t;
+  if(Math.hypot(x-player.x,y-player.y)<minAllowed) return false;
+  const relX=x-player.x,relY=y-player.y;
+  const forward=relX*Math.cos(player.angle)+relY*Math.sin(player.angle);
+  const lateral=Math.abs(-relX*Math.sin(player.angle)+relY*Math.cos(player.angle));
+  if(forward>.2&&forward<3.25&&lateral<.82) return false;
+ }
+ return true;
+}
+function npcPathAvoidsSquad(n,tx,ty) {
+ const dx=tx-n.x,dy=ty-n.y,l2=dx*dx+dy*dy;
+ if(l2<.0001) return true;
+ const intersects=(x,y,space)=>{
+  const start=Math.hypot(n.x-x,n.y-y);
+  const t=clamp(((x-n.x)*dx+(y-n.y)*dy)/l2,0,1);
+  return Math.hypot(n.x+dx*t-x,n.y+dy*t-y)<Math.min(space,start)-.018;
+ };
+ for(const o of npcs){
+  if(o===n||o.downed) continue;
+  if(intersects(o.x,o.y,.84)) return false;
+  const i=o.intent;
+  if(i&&i.goal&&(i.phase==='travel'||i.phase==='dwell')&&intersects(i.goal.x,i.goal.y,.93))return false;
+  if(o.yieldPoint&&intersects(o.yieldPoint.x,o.yieldPoint.y,.84)) return false;
+ }
+ return true;
+}
+function npcStaticSpotValid(n,x,y) {
+ if(!npcFreePoint(x,y,.23)) return false;
+ if(Math.abs(floorAt(x,y)-floorAt(n.x,n.y))>.55) return false;
+ const dp=Math.hypot(x-player.x,y-player.y);
+ if(dp<2.65||dp>7.5) return false;
+ const dn=Math.hypot(x-n.x,y-n.y);
+ if(dn<1.12||dn>4.15) return false;
+ if(npcInPlayerFront(x,y,3.0,1.02)) return false;
+ for(const other of npcs) {
+  if(other===n||other.downed) continue;
+  if(Math.hypot(x-other.x,y-other.y)<1.0) return false;
+  const oi=other.intent;
+  if(oi&&oi.goal&&(oi.phase==='travel'||oi.phase==='dwell')&&
+    Math.hypot(x-oi.goal.x,y-oi.goal.y)<1.2) return false;
+ }
+ return true;
+}
+function npcThreatNear(n) {
+ for(const z of enemies) {
+  if(Math.hypot(z.x-n.x,z.y-n.y)<5.0) return true;
+  if(Math.hypot(z.x-player.x,z.y-player.y)<7.5&&visible(player.x,player.y,z.x,z.y)) return true;
+ }
+ return false;
+}
+function npcDailyTaskAllowed(n,distToPlayer,motion) {
+ const i=n.intent;
+ if(!story||!i||n.downed||n.yieldPoint) return false;
+ if(i.phase!=='follow'&&i.phase!=='travel'&&i.phase!=='dwell'&&i.phase!=='wait') return false;
+ if(distToPlayer>9.5) return false;
+ if(npcs.some(o=>o.downed)) return false;
+ // A real walk-away cancels the local task; camera rotation never changes playerX/Y.
+ if(i.phase!=='follow'&&Math.hypot(player.x-i.playerX,player.y-i.playerY)>6.5) return false;
+ if(motion&&motion.speed>4.6) return false;
+ if(npcThreatNear(n)) return false;
+ return true;
+}
+function npcAutoMoverCount() {
+ let count=0;
+ for(const n of npcs) if(!n.downed&&n.intent&&n.intent.phase==='travel') count++;
+ return count;
+}
+function npcDailyPropLabel(type) {
+ return NPC_DAILY_PROP_LABELS[type]||'设施';
+}
+function npcDailyLandmarks(n,profile) {
+ const out=[];
+ const add=(x,y,label,type,weight,source)=>{
+  if(!Number.isFinite(x)||!Number.isFinite(y)) return;
+  const dn=Math.hypot(x-n.x,y-n.y),dp=Math.hypot(x-player.x,y-player.y);
+  if(dn<1.0||dn>profile.radius||dp>8.2||dp<1.2) return;
+  out.push({x,y,label:label||'地标',type:type||'landmark',weight:weight||1,source});
+ };
+ for(const p of (MAP.props||[])) {
+  const weight=profile.types[p.t];
+  if(!weight) continue;
+  add(p.x,p.z,npcDailyPropLabel(p.t),p.t,weight,'prop');
+ }
+ for(const s of (MAP.wallSigns||[])) {
+  const weight=profile.types.sign;
+  if(!weight) continue;
+  add(s.x,s.z,s.text||'标牌','sign',weight*.85,'sign');
+ }
+ for(const s of (MAP.signs||[])) {
+  const weight=profile.types.sign;
+  if(!weight) continue;
+  add((s[0]+s[1])/2,s[2],s[3]||'标牌','sign',weight*.9,'sign');
+ }
+ return out;
+}
+function npcStandCandidatesFor(n,landmark,profile,kind) {
+ const base=Math.atan2(n.y-landmark.y,n.x-landmark.x);
+ const result=[];
+ const radii=[1.25,1.5,1.72,2.0];
+ const offsets=[0,.5,-.5,1.0,-1.0,1.6,-1.6,Math.PI];
+ for(const radius of radii) {
+  let accepted=0;
+  for(const off of offsets) {
+   const angle=base+off;
+   const x=landmark.x+Math.cos(angle)*radius,y=landmark.y+Math.sin(angle)*radius;
+   if(!npcStaticSpotValid(n,x,y)) continue;
+   if(!npcPathAvoidsPlayer(n,x,y)||!npcPathAvoidsSquad(n,x,y)) continue;
+   if(!walkableLine(n.x,n.y,x,y,.21)) continue;
+   const dn=Math.hypot(x-n.x,y-n.y),dp=Math.hypot(x-player.x,y-player.y);
+   let score=Math.abs(dn-(profile.prefer||3))*.34+Math.abs(radius-1.4)*.5+Math.abs(off)*.12;
+   score-=Math.min(3.2,landmark.weight||1)*.24;
+   score+=Math.abs(dp-3.4)*.16+Math.random()*.16;
+   result.push({x,y,look:{x:landmark.x,y:landmark.y},label:landmark.label,
+    kind,source:landmark.source,score});
+   if(++accepted>=3) break;
+  }
+ }
+ return result;
+}
+function npcCompanionCandidates(n,profile) {
+ if(n.squad.id!=='lin') return [];
+ const result=[];
+ for(const other of npcs) {
+  if(other===n||other.downed) continue;
+  const dn=Math.hypot(other.x-n.x,other.y-n.y),dp=Math.hypot(other.x-player.x,other.y-player.y);
+  if(dn<1.4||dn>profile.radius||dp>7.4) continue;
+  const base=Math.atan2(n.y-other.y,n.x-other.x);
+  for(const radius of [1.35,1.58]) for(const off of [0,.7,-.7,1.4,-1.4,Math.PI]) {
+   const angle=base+off;
+   const x=other.x+Math.cos(angle)*radius,y=other.y+Math.sin(angle)*radius;
+   if(!npcStaticSpotValid(n,x,y)) continue;
+   if(!npcPathAvoidsPlayer(n,x,y)||!npcPathAvoidsSquad(n,x,y)) continue;
+   if(!walkableLine(n.x,n.y,x,y,.21)) continue;
+   if(!visible(x,y,other.x,other.y)) continue;
+   const talk=other.intent&&(other.intent.phase==='dwell'||other.intent.phase==='wait')&&
+    Math.random()<.55;
+   const kind=talk?'chat':'care';
+   const score=Math.hypot(x-n.x,y-n.y)*.38+Math.abs(radius-1.45)*.6-
+    (talk?.3:0)+Math.random()*.15-.55;
+   result.push({x,y,look:{x:other.x,y:other.y},label:other.squad.name,
+    kind,source:'companion',score});
+   if(result.length>=8) return result;
+  }
+ }
+ return result;
+}
+function npcNearbyDailyGoals(n) {
+ const out=[],role=n.squad.id,want=role==='qi'?2.7:role==='lin'?1.55:2.1;
+ const base=(n.yaw||0)+(n.squadIndex||0)*.43,prev=n.intent&&n.intent.previousStart;
+ for(const radius of [1.35,1.85,2.45,3.05]) for(let j=0;j<16;j++) {
+  const a=base+j*Math.PI/8,c=Math.cos(a),q=Math.sin(a),x=n.x+c*radius,y=n.y+q*radius;
+  if(!npcStaticSpotValid(n,x,y)||!npcPathAvoidsPlayer(n,x,y)||!npcPathAvoidsSquad(n,x,y)) continue;
+  if(!walkableLine(n.x,n.y,x,y,.21))continue;
+  let look={x:x+c*1.7,y:y+q*1.7};
+  if(!fits(look.x,look.y,.12)||!visible(x,y,look.x,look.y))look={x:n.x,y:n.y};
+  const backtrack=prev&&Math.hypot(x-prev.x,y-prev.y)<1.1?1.7:0;
+  out.push({x,y,look,label:zone(x,y),kind:role==='lin'?'rest':'observe',source:'nearby',
+   score:Math.abs(radius-want)*.55+Math.abs(Math.hypot(x-player.x,y-player.y)-3.7)*.22+backtrack+Math.random()*.22});
+ }
+ return out;
+}
+function npcChooseDailyGoal(n) {
+ const profile=npcProfile(n);
+ const kind=n.squad.id==='lin'?'rest':(n.squad.id==='qin'?'inspect':'observe');
+ const options=[];
+ for(const landmark of npcDailyLandmarks(n,profile))
+  options.push(...npcStandCandidatesFor(n,landmark,profile,kind));
+ if(n.squad.id==='lin') options.push(...npcCompanionCandidates(n,profile));
+ if(!options.length) options.push(...npcNearbyDailyGoals(n));
+ if(!options.length) return null;
+ options.sort((a,b)=>a.score-b.score);
+ return options[Math.floor(Math.random()*Math.min(3,options.length))];
+}
+function npcFixedLook(n) {
+ const order=[0,1,2,3,4,5,6,7].map(i=>(i+(n.squadIndex||0)*2)%8);
+ for(const step of order) {
+  const angle=step*Math.PI/4;
+  const x=n.x+Math.cos(angle)*2.4,y=n.y+Math.sin(angle)*2.4;
+  if(!fits(x,y,.18)||Math.abs(floorAt(x,y)-floorAt(n.x,n.y))>.55) continue;
+  if(!visible(n.x,n.y,x,y)) continue;
+  if(Math.hypot(x-player.x,y-player.y)<1.8) continue;
+  return {x,y};
+ }
+ const away=Math.atan2(n.y-player.y,n.x-player.x);
+ return {x:n.x+Math.cos(away)*1.9,y:n.y+Math.sin(away)*1.9};
+}
+function npcMaybeDailyLine(n,kind) {
+ if(!n.intent||n.sceneCd>0||dialogueCurrent||dialogueQueue.length||mode!=='play') return;
+ if(Math.random()>.5) return;
+ const pools=NPC_DAILY_LINES[n.squad.id]||{},lines=pools[kind]||pools.observe||pools.rest;
+ if(!lines||!lines.length) return;
+ say(n.squad.id,lines[Math.floor(Math.random()*lines.length)],3.6);
+ n.sceneCd=32+Math.random()*20;
+}
+function npcBeginFixed(n) {
+ const i=n.intent,profile=npcProfile(n);
+ if(!i) return;
+ i.kind=profile.fixedKind;i.phase='dwell';
+ i.goal={x:n.x,y:n.y,look:npcFixedLook(n),
+  label:n.squad.id==='lin'?'原地休息':'原地观察',source:'fixed'};
+ i.look=i.goal.look;
+ i.time=profile.dwell[0]+Math.random()*(profile.dwell[1]-profile.dwell[0]);
+ i.dwell=i.time;i.playerX=player.x;i.playerY=player.y;i.stuck=0;
+ i.label=npcIntentLabel(n);
+ npcMaybeDailyLine(n,i.kind);
+}
+function npcTryStartDaily(n,motion) {
+ const i=n.intent;
+ if(!i) return 'busy';
+ if(npcAutoMoverCount()>=NPC_DAILY_MAX_MOVERS) {
+  i.time=1.2+Math.random()*1.1;
+  return 'busy';
+ }
+ if(motion.speed>=3.0) {
+  i.time=.8+Math.random()*.8;
+  return 'wait';
+ }
+ const goal=npcChooseDailyGoal(n);
+ if(!goal) {npcBeginFixed(n);return 'fixed';}
+ const profile=npcProfile(n);
+ i.previousStart={x:n.x,y:n.y};
+ i.kind=goal.kind;i.phase='travel';i.goal=goal;i.look=goal.look;
+ i.playerX=player.x;i.playerY=player.y;i.speed=profile.speed;
+ i.time=Math.max(5,Math.hypot(goal.x-n.x,goal.y-n.y)/profile.speed+4.5);
+ i.dwell=profile.dwell[0]+Math.random()*(profile.dwell[1]-profile.dwell[0]);
+ i.stuck=0;i.label=npcIntentLabel(n);
+ return 'started';
+}
+function npcDailyPrepare(n,motion) {
+ const i=n.intent,profile=npcProfile(n);
+ if(!i) return null;
+ if(i.phase==='travel') {
+  if(!i.goal||i.time<=0) {npcAbortDaily(n);return null;}
+  // If the player walks into the old destination, stop short instead of crowding them.
+  if(Math.hypot(i.goal.x-player.x,i.goal.y-player.y)<1.75) {npcAbortDaily(n);return null;}
+  return {x:i.goal.x,y:i.goal.y,speed:i.speed||profile.speed,stop:.18};
+ }
+ if(i.phase==='dwell') {
+  if(i.time<=0) {
+   i.phase='wait';i.goal=null;i.look=null;
+   i.time=profile.wait[0]+Math.random()*(profile.wait[1]-profile.wait[0]);
+   i.label='停留';
+  }
+  return null;
+ }
+ if(i.phase==='wait') {
+  if(i.time>0) return null;
+  if(motion.speed>=3.0) {i.time=.8+Math.random()*.8;return null;}
+  return npcTryStartDaily(n,motion)==='started'
+   ? {x:i.goal.x,y:i.goal.y,speed:i.speed,stop:.18} : null;
+ }
+ return null;
+}
+function npcDailyAfterMove(n,dt,moved) {
+ const i=n.intent;
+ if(!i||i.phase!=='travel') return;
+ const goal=i.goal;
+ if(goal&&Math.hypot(n.x-goal.x,n.y-goal.y)<=.30) {
+  i.phase='dwell';i.time=i.dwell||npcProfile(n).dwell[0];
+  i.stuck=0;i.arrived={x:n.x,y:n.y};
+  npcMaybeDailyLine(n,i.kind);
+  return;
+ }
+ if(moved<.12*dt) i.stuck=(i.stuck||0)+dt; else i.stuck=0;
+ if(i.stuck>1.35||i.time<=0) npcAbortDaily(n);
 }
 function npcTarget(n) {
  let best=null,bestScore=Infinity;
@@ -783,10 +1171,13 @@ function npcFire(n,target) {
 function updateNpcs(dt) {
  if(!story) return;
  if(!route.length) updateRoute();
- const trail=squadTrail();
+ const trail=squadTrail(),motion=npcTrackPlayer(dt);
  for(const n of npcs) {
   n.flash=Math.max(0,n.flash-dt);n.muzzle=Math.max(0,n.muzzle-dt);n.barkCd=Math.max(0,(n.barkCd??0)-dt);
   n.hurtCd=Math.max(0,(n.hurtCd??0)-dt);n.healCd=Math.max(0,(n.healCd??0)-dt);
+  n.sceneCd=Math.max(0,(n.sceneCd??0)-dt);n.yieldCooldown=Math.max(0,(n.yieldCooldown??0)-dt);
+  if(n.intent) n.intent.time=Math.max(0,n.intent.time-dt);
+  if(n.downed&&n.intent){n.intent.yielding=false;n.intent.label='救援';}
   if(n.downed) {
    n.downT=(n.downT??0)+dt;
    let helpers=0;
@@ -810,12 +1201,16 @@ function updateNpcs(dt) {
   const startX=n.x,startY=n.y;
   let desired=null,speed=3.3,stop=.45;
   if(rescue&&rescueDist<13&&(!target||role==='lin'||rescueDist<7)) {
+   npcPriorityIntent(n,'rescue',{x:rescue.x,y:rescue.y,label:'救援'});
    desired={x:rescue.x,y:rescue.y};speed=rescueDist>7?4.7:3.6;stop=1.1;n.state='rescue';
   } else if(distToPlayer>19) {
+   npcPriorityIntent(n,'regroup');
    desired={x:player.x,y:player.y};speed=4.8;stop=2.8;n.state='regroup';
   } else if(role==='lin'&&player.hp<34&&distToPlayer>4.2) {
+   npcPriorityIntent(n,'regroup');
    desired={x:player.x,y:player.y};speed=4.6;stop=3.3;n.state='regroup';
   } else if(target) {
+   npcPriorityIntent(n,'combat',{x:target.x,y:target.y,label:'警戒'});
    const distance=Math.hypot(target.x-n.x,target.y-n.y),range=n.squad.range||10;
    if(distance>range+1.5) {desired={x:target.x,y:target.y};speed=role==='qi'?4.2:3.6;n.state='advance';}
    else if(distance<range-4) {
@@ -829,12 +1224,38 @@ function updateNpcs(dt) {
    n.fireCd=Math.max(0,(n.fireCd??0)-dt);
    if(n.fireCd<=0&&distance<=(n.squad.range||10)+4&&visible(n.x,n.y,target.x,target.y)) npcFire(n,target);
   } else {
-   if(n.formationRevision!==trail.revision||!n.anchor) {
-    const point=npcAnchor(n,trail);
-    n.anchor=point||{x:n.x,y:n.y};
-    n.formationRevision=trail.revision;
+   const i=n.intent,dailyAllowed=npcDailyTaskAllowed(n,distToPlayer,motion);
+   if(i.phase==='priority') npcSuspendDaily(n);
+   if(i.phase==='follow') {
+    // Fixed follow slots are only used while truly following. Once a daily task
+    // starts, the companion keeps that safe spot instead of fighting for a slot.
+    if(n.formationRevision!==trail.revision||!n.anchor) {
+     const point=npcAnchor(n,trail);
+     n.anchor=point||{x:n.x,y:n.y};
+     n.formationRevision=trail.revision;
+    }
+    if(n.anchor) {
+     desired=n.anchor;speed=distToPlayer>7?4.7:3.2;n.state='patrol';
+     const anchorDist=Math.hypot(n.x-n.anchor.x,n.y-n.anchor.y);
+     if(dailyAllowed&&i.time<=0&&anchorDist<1.15&&motion.speed<3.0) {
+      const started=npcTryStartDaily(n,motion);
+      if(started==='started') {desired={x:i.goal.x,y:i.goal.y};speed=i.speed;stop=.18;n.state='daily';}
+      else if(started==='fixed') {desired=null;n.state='daily';}
+     }
+    }
+   } else if(!dailyAllowed) {
+    npcSuspendDaily(n);
+    if(n.formationRevision!==trail.revision||!n.anchor) {
+     const point=npcAnchor(n,trail);
+     n.anchor=point||{x:n.x,y:n.y};
+     n.formationRevision=trail.revision;
+    }
+    if(n.anchor) {desired=n.anchor;speed=distToPlayer>7?4.7:3.2;n.state='patrol';}
+   } else {
+    const daily=npcDailyPrepare(n,motion);
+    if(daily) {desired={x:daily.x,y:daily.y};speed=daily.speed;stop=daily.stop;}
+    n.state='daily';
    }
-   if(n.anchor) {desired=n.anchor;speed=distToPlayer>7?4.7:3.2;n.state='patrol';}
   }
   const relX=n.x-player.x,relY=n.y-player.y,relD=Math.hypot(relX,relY);
   const forward=relX*Math.cos(player.angle)+relY*Math.sin(player.angle);
@@ -847,18 +1268,40 @@ function updateNpcs(dt) {
    // can walk past the parked companion rather than chasing them down the hall.
    const gx=y.x-y.fromX,gy=y.y-y.fromY,length=Math.hypot(gx,gy)||1;
    const passed=((player.x-y.x)*gx+(player.y-y.y)*gy)/length>.7;
-   if(y.parkAhead?(passed||Math.hypot(player.x-y.x,player.y-y.y)>5.5):progress>1.15) n.yieldPoint=null;
+   const parked=Math.hypot(n.x-y.x,n.y-y.y)<.30;
+   const safeParked=parked&&relD>1.75&&!npcInPlayerFront(n.x,n.y,3.25,1.15)&&motion.still>1.0;
+   if(!y.parkAhead&&safeParked) y.settled=(y.settled||0)+dt; else y.settled=0;
+   if(!y.parkAhead&&y.settled>2.4) {
+    // The player stayed put and the companion is no longer in the sight line:
+    // release the fixed slot, but stay in this safe spot for a short cool-down.
+    n.yieldPoint=null;n.yieldCooldown=4.5;n.yieldSafeAt={x:player.x,y:player.y};
+    if(!target&&!rescue) {
+     const i=n.intent;
+     if(i) {i.kind=npcProfile(n).fixedKind;i.phase='wait';i.goal=null;i.look=null;
+      i.stuck=0;i.time=3.5+Math.random()*2.5;i.playerX=player.x;i.playerY=player.y;i.label='停留';}
+     desired=null;
+    }
+   } else if(y.parkAhead?(passed||Math.hypot(player.x-y.x,player.y-y.y)>5.5):progress>1.15) {
+    n.yieldPoint=null;n.yieldCooldown=1.2;n.yieldSafeAt={x:player.x,y:player.y};
+   }
   }
-  if(!n.yieldPoint&&relD<2.55&&(relD<1.02||(forward>0&&lateral<.68&&forward>relD*.68))) {
-   n.yieldPoint=npcYieldPoint(n);
+  if(!n.yieldPoint&&n.yieldCooldown<=0&&relD<2.55&&(relD<1.02||(forward>0&&lateral<.68&&forward>relD*.68))) {
+   const movedFromSafe=!n.yieldSafeAt||
+    Math.hypot(player.x-n.yieldSafeAt.x,player.y-n.yieldSafeAt.y)>.35;
+   // Camera-only rotation must not make a parked companion oscillate around the player.
+   // Very close personal space still yields immediately even during the cool-down.
+   if(relD<1.85||movedFromSafe) {
+    n.yieldPoint=npcYieldPoint(n);
+    if(n.yieldPoint) {n.yieldPoint.settled=0;npcSuspendDaily(n);}
+   }
   }
   if(n.yieldPoint) {
    desired=n.yieldPoint;speed=3.2;stop=.22;n.state='clear';
   } else if(relD<1.02) {
    // No open side: wait without walking into the player; movement will reopen a route.
-   desired=null;
+   npcSuspendDaily(n);desired=null;
   }
-  if(desired) npcStep(n,desired.x,desired.y,speed,dt,stop);
+  const stepMoved=desired?npcStep(n,desired.x,desired.y,speed,dt,stop):0;
   // A small bounded separation replaces the old per-frame sideways pushes.
   // It cannot cross walls or move toward the player's personal space.
   if(!n.yieldPoint) for(const other of npcs) {
@@ -869,9 +1312,14 @@ function updateNpcs(dt) {
    const push=Math.min((.72-d)*2.5,.8)*dt;
    npcMove(n,Math.cos(angle)*push,Math.sin(angle)*push);
   }
+  if(n.state==='daily') npcDailyAfterMove(n,dt,stepMoved);
   const movedX=n.x-startX,movedY=n.y-startY;
   if(Math.hypot(movedX,movedY)>dt*.16) npcFace(n,Math.atan2(movedY,movedX),dt);
-  else if(target&&!n.yieldPoint) npcFace(n,Math.atan2(target.y-n.y,target.x-n.x),dt);
+  else if(n.intent&&n.intent.phase==='dwell') {
+   const look=n.intent.look||(n.intent.goal&&n.intent.goal.look);
+   if(look) npcFace(n,Math.atan2(look.y-n.y,look.x-n.x),dt,2.2);
+  } else if(target&&!n.yieldPoint) npcFace(n,Math.atan2(target.y-n.y,target.x-n.x),dt);
+  if(n.intent) {n.intent.label=npcIntentLabel(n);n.intent.yielding=!!n.yieldPoint;}
   // At rest keep the last orientation; no tracking the player's camera.
   for(const z of enemies) {
    if(Math.hypot(z.x-n.x,z.y-n.y)>.95||!visible(z.x,z.y,n.x,n.y)) continue;
@@ -902,7 +1350,7 @@ function updateStoryHud() {
  $('storyObjective').innerHTML=act.label+(extra?'<small>'+extra+'</small>':'');
  $('storySquad').innerHTML=npcs.map(n=>{
   const percent=Math.max(0,Math.round(n.hp/n.maxHp*100));
-  const state=n.downed?('救援 '+Math.min(100,Math.round((n.revive||0)/2.2*100))+'%'):'在队';
+  const state=n.downed?('救援 '+Math.min(100,Math.round((n.revive||0)/2.2*100))+'%'):('· '+npcIntentLabel(n));
   return '<span class="squadChip'+(n.downed?' down':'')+'"><b>'+n.squad.name+'</b><i><u style="width:'+percent+'%"></u></i>'+state+'</span>';
  }).join('');
 }
