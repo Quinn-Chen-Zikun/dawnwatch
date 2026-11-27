@@ -1628,6 +1628,7 @@ function startStory(index) {
  wave=storyChapter*2+1;
  spawnSquad();
  activateAudio();startAmbience();setMode('play');lockAim();
+ if(chapter.intro) for(const [who,line] of chapter.intro) say(who,line,4.2);
  setupStoryAct(0,true);
 }
 function setupStoryAct(index,first) {
