@@ -1711,6 +1711,7 @@ function updateStory(dt) {
 function downNpc(n) {
  n.downed=true;n.downT=0;n.downDir=n.yaw+Math.PI;n.revive=0;n.hp=0;
  say(n.squad.id,'我……撑不住了……',3.6);
+ setNotice(n.squad.name+' 倒地 · 靠近即可救援',2.4);
  tone(96,.32,'sawtooth',.1,40);
 }
 function reviveNpc(n) {
