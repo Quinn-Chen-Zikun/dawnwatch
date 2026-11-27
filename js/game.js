@@ -477,7 +477,7 @@ function spawnSquad() {
   return {friendly:true,type:'walker',kind:{height:squad.height},squad,
    x,y,yaw:player.angle,anim:Math.random()*6,flash:0,
    hp:120,maxHp:120,downed:false,downT:0,downDir:0,revive:0,
-   fireCd:.7+Math.random()*.9,hurtCd:0,barkCd:16+Math.random()*10,muzzle:0};
+   fireCd:.7+Math.random()*.9,hurtCd:0,barkCd:16+Math.random()*10,muzzle:0,sideBias:index===2?1:index===1?-1:1};
  });
 }
 function storyEnemyType(chapter) {
@@ -663,14 +663,18 @@ function npcStep(n,tx,ty,speed,dt) {
 }
 function npcAnchor(n) {
  const role=n.squad.id,p=player,objective=story&&story.objective;
- const base=objective?Math.atan2(objective.y-p.y,objective.x-p.x):p.angle;
+ const base=role==='lin'?p.angle+Math.PI*.85:(objective?Math.atan2(objective.y-p.y,objective.x-p.x):p.angle);
  const cfg=role==='qin'?{dist:5.6,side:0}:role==='lin'?{dist:4.4,side:-1.4}:{dist:9.2,side:1.6};
  for(let attempt=0;attempt<12;attempt++) {
   const angle=base+(Math.random()-.5)*.85;
   const distance=cfg.dist*(.72+Math.random()*.55),side=cfg.side*(.35+Math.random()*.9);
   const x=p.x+Math.cos(angle)*distance+Math.cos(angle+Math.PI/2)*side;
   const y=p.y+Math.sin(angle)*distance+Math.sin(angle+Math.PI/2)*side;
-  if(fits(x,y,.24)&&Math.abs(floorAt(x,y)-floorAt(p.x,p.y))<.62) return {x,y};
+  if(fits(x,y,.24)&&Math.abs(floorAt(x,y)-floorAt(p.x,p.y))<.62) {
+   const relX=x-p.x,relY=y-p.y,relD=Math.hypot(relX,relY)||1;
+   const dot=(relX*Math.cos(p.angle)+relY*Math.sin(p.angle))/relD;
+   if(!(relD<3.3&&dot>.35)) return {x,y};
+  }
  }
  return null;
 }
@@ -762,6 +766,16 @@ function updateNpcs(dt) {
    n.anchorTimer-=dt;
    if(n.anchor) {desired=n.anchor;speed=role==='qi'?3.8:2.9;n.state='patrol';}
   }
+  const relX=n.x-player.x,relY=n.y-player.y,relD=Math.hypot(relX,relY);
+  if(relD>0.01&&relD<3.3&&n.state!=='rescue') {
+   const dot=(relX*Math.cos(player.angle)+relY*Math.sin(player.angle))/relD;
+   if(dot>.32) {
+    const lateral=relX*Math.sin(player.angle)-relY*Math.cos(player.angle);
+    const side=Math.abs(lateral)>.12?(lateral>=0?1:-1):(n.sideBias||1);
+    desired={x:player.x+Math.cos(player.angle)*.6-Math.sin(player.angle)*side*2.8, y:player.y+Math.sin(player.angle)*.6+Math.cos(player.angle)*side*2.8};
+    speed=3.8;n.state='clear';
+   }
+  }
   if(desired) {
    const distance=Math.hypot(desired.x-n.x,desired.y-n.y);
    if(distance>.65&&(n.state!=='fight'||distance>1.2)) npcStep(n,desired.x,desired.y,speed,dt);
@@ -773,7 +787,20 @@ function updateNpcs(dt) {
    if(between>.01&&between<1.1) move(n,dx/between*.022,dy/between*.022,.21);
   }
   const dx=n.x-player.x,dy=n.y-player.y,between=Math.hypot(dx,dy);
-  if(between>.01&&between<1.55&&n.state!=='regroup'&&n.state!=='rescue') move(n,dx/between*.020,dy/between*.020,.21);
+  if(between>.01&&between<1.35&&n.state!=='regroup'&&n.state!=='rescue') {
+   const aimX2=Math.cos(player.angle),aimY2=Math.sin(player.angle);
+   const lateral=dx*aimY2-dy*aimX2;
+   const side=lateral>=0?1:-1,push=(1.35-between)/between;
+   move(n,dx/between*push*.7-aimY2*side*.025,dy/between*push*.7+aimX2*side*.025,.21);
+  }
+  const aimX=Math.cos(player.angle),aimY=Math.sin(player.angle);
+  if(between>.01&&between<3.6) {
+   const dot=(dx*aimX+dy*aimY)/between;
+   if(dot>.34) {
+    const side=(dx*aimY-dy*aimX)>=0?1:-1;
+    move(n,-aimY*side*.055,aimX*side*.055,.21);
+   }
+  }
   for(const z of enemies) {
    if(Math.hypot(z.x-n.x,z.y-n.y)>.95||!visible(z.x,z.y,n.x,n.y)) continue;
    if((n.hurtCd??0)<=0) {
